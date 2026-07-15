@@ -3,4 +3,3 @@
 # Summary: Defines the installable MCP agent-operations package boundary.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
-

@@ -3,4 +3,3 @@
 # Summary: Groups installed command-line entry points over agent-operations domains.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
-

@@ -27,4 +27,3 @@
 - The service starts over stdio without writing non-protocol output to standard output.
 - Tool results are structured and schema-described.
 - Skill content is available as MCP resources and through tool fallbacks for tool-only hosts.
-

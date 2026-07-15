@@ -46,4 +46,3 @@ class LoadedSkillResource(BaseModel):
     digest: str
     content: str | None = None
     data_base64: str | None = None
-

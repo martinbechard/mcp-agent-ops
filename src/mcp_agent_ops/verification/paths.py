@@ -48,4 +48,3 @@ def validate_glob_pattern(pattern: str) -> None:
     candidate = Path(pattern)
     if not pattern.strip() or candidate.is_absolute() or ".." in candidate.parts:
         raise PathBoundaryError(f"Pattern is outside the allowed root: {pattern}")
-

@@ -49,4 +49,3 @@ def test_verify_markdown_links_rejects_source_patterns_outside_root(tmp_path: Pa
     assert result.ok is False
     assert result.checked_files == []
     assert result.findings[0].code == "path_outside_root"
-

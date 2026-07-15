@@ -3,4 +3,3 @@
 # Summary: Groups deterministic, read-only repository verification operations.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
-

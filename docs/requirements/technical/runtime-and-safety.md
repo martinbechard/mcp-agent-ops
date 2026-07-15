@@ -8,4 +8,3 @@
 - Keep authoritative claim state on disk so separate stdio server processes coordinate correctly.
 - Test protocol behavior both in memory and through a real stdio subprocess.
 - Test claim contention with independent processes against one temporary Git repository.
-

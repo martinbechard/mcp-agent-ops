@@ -3,4 +3,3 @@
 # Summary: Groups structured discovery and safe reading of installed Agent Skills.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
-

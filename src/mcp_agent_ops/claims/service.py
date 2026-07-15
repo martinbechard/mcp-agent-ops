@@ -47,4 +47,3 @@ def run_claim_command(arguments: Sequence[str]) -> ClaimCommandResult:
     if not isinstance(decoded, dict):
         raise ValueError("Claim engine did not return a JSON object.")
     return ClaimCommandResult(exit_code=exit_code, result=decoded)
-

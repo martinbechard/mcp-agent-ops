@@ -30,4 +30,3 @@ The server provides discovery and content retrieval, but it does not claim that 
 ## Transport
 
 The initial transport is stdio. A server process may be short-lived, so no correctness rule relies on process memory. An HTTP transport can be added later without changing domain interfaces.
-

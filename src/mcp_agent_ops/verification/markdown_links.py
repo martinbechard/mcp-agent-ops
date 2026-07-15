@@ -129,4 +129,3 @@ def verify_markdown_links(root: Path, patterns: Sequence[str]) -> VerificationRe
                         )
                     )
     return VerificationReport(ok=not findings, checked_files=checked, findings=findings)
-

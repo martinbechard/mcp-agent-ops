@@ -50,4 +50,3 @@ def detect_technology_skills(
     )
     result, exit_code = detect(arguments)
     return TechnologyDetectionResult(exit_code=exit_code, result=result)
-

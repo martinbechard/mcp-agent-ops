@@ -97,4 +97,3 @@ def verify_yaml(root: Path, paths: Sequence[str]) -> VerificationReport:
                 VerificationFinding(code="invalid_utf8", message=str(error), path=relative)
             )
     return VerificationReport(ok=not findings, checked_files=checked, findings=findings)
-

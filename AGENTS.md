@@ -24,4 +24,3 @@
 - Use `uv run pytest` for the full test suite.
 - Use `uv run ruff check .` and `uv run mypy src` for static verification.
 - Add real stdio and multi-process tests when changing transport or claim concurrency behavior.
-

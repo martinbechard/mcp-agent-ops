@@ -3,4 +3,3 @@
 # Summary: Exposes copied Agent Skill validation as an upstream package.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
-

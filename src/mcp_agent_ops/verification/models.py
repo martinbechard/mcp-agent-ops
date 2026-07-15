@@ -32,4 +32,3 @@ class VerificationReport(BaseModel):
     ok: bool
     checked_files: list[str] = Field(default_factory=list)
     findings: list[VerificationFinding] = Field(default_factory=list)
-

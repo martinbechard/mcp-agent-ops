@@ -43,4 +43,3 @@ def test_verify_yaml_rejects_paths_outside_root(tmp_path: Path) -> None:
     assert result.ok is False
     assert result.checked_files == []
     assert result.findings[0].code == "path_outside_root"
-

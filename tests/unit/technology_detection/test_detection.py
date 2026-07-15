@@ -67,4 +67,3 @@ def test_detection_blocks_scopes_outside_project_root(tmp_path: Path) -> None:
     assert result.exit_code == 2
     assert result.result["loadouts"][0]["status"] == "BLOCKED"
     assert result.result["loadouts"][0]["scopeErrors"] == ["scope resolves outside the project root"]
-
