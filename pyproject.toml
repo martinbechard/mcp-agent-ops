@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mcp-agent-ops"
+version = "0.1.0"
+description = "Deterministic MCP tools for agent claims, repository verification, and skill discovery."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+authors = [
+  { name = "Martin Bechard", email = "Martin.Bechard@DevConsult.ca" },
+]
+dependencies = [
+  "fastmcp==3.4.4",
+  "pydantic>=2.11,<3",
+  "pyyaml>=6.0.2,<7",
+]
+
+[project.scripts]
+mcp-agent-ops = "mcp_agent_ops.__main__:main"
+mcp-agent-ops-claims = "mcp_agent_ops.adapters.cli.claims:main"
+
+[dependency-groups]
+dev = [
+  "mypy>=1.16,<2",
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1.0,<2",
+  "ruff>=0.12,<1",
+  "types-pyyaml>=6.0.12,<7",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_agent_ops"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = [
+  "src/mcp_agent_ops/claims/engine.py",
+  "src/mcp_agent_ops/skill_validation/engine.py",
+  "src/mcp_agent_ops/technology_detection/engine.py",
+  "tests/compatibility/test_claim_cli.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["mcp_agent_ops"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = [
+  "mcp_agent_ops.claims.engine",
+  "mcp_agent_ops.technology_detection.engine",
+]
+ignore_errors = true
