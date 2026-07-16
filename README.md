@@ -90,7 +90,7 @@ Repository, project, verification, worktree, and validation paths supplied throu
 
 The skill catalog is built lazily and reused for the life of the server process. `skill_refresh` atomically publishes a new catalog snapshot after installed skills change. Technology registry configuration is also cached and takes effect after restarting the server. Claim state remains disk-authoritative and coordinates across server processes.
 
-Evaluation runners may configure `MCP_AGENT_OPS_AUDIT_LOG` plus `MCP_AGENT_OPS_AUDIT_ROOTS` to create one exclusive digest-only JSON Lines tool-call trace. When a harness starts inherited MCP servers for a parent and subagent, set `MCP_AGENT_OPS_AUDIT_SHARED=true` plus a 32-character lowercase hexadecimal `MCP_AGENT_OPS_AUDIT_SESSION_ID`; each process then writes a separate random stream identity and process-local sequence into the same owner-only file under a POSIX file lock. Both modes record only canonical tool name, lifecycle status, call identity, sequence, and argument or result digests. Shared version-two records also carry the session and process stream identities, and their terminal records carry bounded canonical outcomes for supported deterministic operations. The trace never stores arguments, returned content, prompts, or configured paths. Do not configure this trace for ordinary sessions that do not need evaluator-owned call evidence.
+Evaluation runners may configure `MCP_AGENT_OPS_AUDIT_LOG` plus `MCP_AGENT_OPS_AUDIT_ROOTS` to create one exclusive digest-only JSON Lines tool-call trace. When a harness starts inherited MCP servers for a parent and subagent, set `MCP_AGENT_OPS_AUDIT_SHARED=true` plus a 32-character lowercase hexadecimal `MCP_AGENT_OPS_AUDIT_SESSION_ID`; each process then writes a separate random stream identity and process-local sequence into the same owner-only file under a POSIX file lock. Both modes record only canonical tool name, lifecycle status, call identity, sequence, and argument or result digests. Shared version-two records also carry the session and process stream identities, and their terminal records carry bounded canonical outcomes for supported deterministic operations. `skill_validate` records `VALID` when its structured `ok` field is true and `FINDINGS` when it is false. `skill_refresh` records `CATALOG` when its published `skills` snapshot is non-empty and `EMPTY` when it is empty. These labels reveal neither skill content nor validation findings. The trace never stores arguments, returned content, prompts, or configured paths. Do not configure this trace for ordinary sessions that do not need evaluator-owned call evidence.
 
 An evaluator can also set `MCP_AGENT_OPS_REQUIRED_RUNTIME_DIGEST` to the pinned value returned by `--identity-json`. The server checks it before importing FastMCP or starting stdio and fails closed when the installed runtime has drifted.
 
@@ -112,7 +112,7 @@ Releases use semantic versions. The Git tag must be `v` followed by the exact `p
 3. Commit the version and lockfile, push `main`, and wait for its CI run to succeed:
 
    ```bash
-   VERSION=0.2.1
+   VERSION=0.2.3
    git add pyproject.toml uv.lock
    git commit -m "Prepare release v${VERSION}"
    git push origin main

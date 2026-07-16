@@ -6,9 +6,15 @@
 
 from pathlib import Path
 
+import pytest
 from pytest import MonkeyPatch
 
 from mcp_agent_ops.skill_validation.service import validate_skills
+
+
+def test_validate_skills_rejects_an_empty_path_list() -> None:
+    with pytest.raises(ValueError, match="At least one skill validation path is required"):
+        validate_skills([])
 
 
 def test_validate_skills_returns_structured_findings(tmp_path: Path) -> None:

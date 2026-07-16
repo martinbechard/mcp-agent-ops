@@ -10,8 +10,10 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
+from fastmcp.exceptions import ToolError
 
 
 async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: Path) -> None:
@@ -111,3 +113,77 @@ async def test_real_stdio_servers_share_one_session_bound_audit(tmp_path: Path) 
             "completed",
         ]
         assert stream_records[-1]["outcome"] == "CATALOG"
+
+
+async def test_real_stdio_shared_audit_records_private_safe_skill_outcomes(
+    tmp_path: Path,
+) -> None:
+    skills = tmp_path / "skills"
+    empty_skills = tmp_path / "empty-skills"
+    skill = skills / "example"
+    skill.mkdir(parents=True)
+    empty_skills.mkdir()
+    (skill / "SKILL.md").write_text(
+        "---\nname: example\ndescription: Private-safe stdio example.\n---\n\n# Example\n",
+        encoding="utf-8",
+    )
+    audit_path = tmp_path / "shared-audit.jsonl"
+    session_id = "e" * 32
+
+    def transport(skill_root: Path) -> StdioTransport:
+        environment = os.environ.copy()
+        environment["MCP_AGENT_OPS_SKILL_ROOTS"] = str(skill_root)
+        environment["MCP_AGENT_OPS_AUDIT_LOG"] = str(audit_path)
+        environment["MCP_AGENT_OPS_AUDIT_ROOTS"] = str(tmp_path)
+        environment["MCP_AGENT_OPS_AUDIT_SHARED"] = "true"
+        environment["MCP_AGENT_OPS_AUDIT_SESSION_ID"] = session_id
+        return StdioTransport(
+            command=sys.executable,
+            args=["-m", "mcp_agent_ops"],
+            env=environment,
+            cwd=str(tmp_path),
+        )
+
+    async with Client(transport(skills), timeout=15) as client:
+        await client.call_tool("skill_refresh", {})
+        await client.call_tool(
+            "skill_validate",
+            {"paths": [str(skill)]},
+        )
+        invalid_skill = skills / "stdio-private-invalid"
+        invalid_skill.mkdir()
+        (invalid_skill / "SKILL.md").write_text(
+            "---\nname: stdio_private\ndescription: <stdio-private-marker>.\n---\n",
+            encoding="utf-8",
+        )
+        await client.call_tool(
+            "skill_validate",
+            {"paths": [str(invalid_skill)]},
+        )
+        with pytest.raises(
+            ToolError,
+            match="At least one skill validation path is required",
+        ):
+            await client.call_tool("skill_validate", {"paths": []})
+
+    async with Client(transport(empty_skills), timeout=15) as client:
+        await client.call_tool("skill_refresh", {})
+
+    audit = audit_path.read_text(encoding="utf-8")
+    terminal = [
+        (record["tool"], record["status"], record.get("outcome"))
+        for record in (json.loads(line) for line in audit.splitlines())
+        if record["status"] != "started"
+    ]
+    assert terminal == [
+        ("skill_refresh", "completed", "CATALOG"),
+        ("skill_validate", "completed", "VALID"),
+        ("skill_validate", "completed", "FINDINGS"),
+        ("skill_validate", "failed", "ERROR"),
+        ("skill_refresh", "completed", "EMPTY"),
+    ]
+    assert "example" not in audit
+    assert "stdio-private-invalid" not in audit
+    assert "stdio-private-marker" not in audit
+    assert "frontmatter name must use" not in audit
+    assert "At least one skill validation path is required" not in audit

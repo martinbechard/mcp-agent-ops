@@ -38,7 +38,12 @@ def validate_skills(
 
     Returns:
         A typed result containing every validation finding. The operation is read-only.
+
+    Raises:
+        ValueError: If no validation path is supplied.
     """
+    if not paths:
+        raise ValueError("At least one skill validation path is required.")
     findings = validate_skill_paths(paths, allowed_roots)
     return SkillValidationResult(
         ok=not findings,

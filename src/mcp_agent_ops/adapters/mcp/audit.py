@@ -236,11 +236,14 @@ def _safe_outcome(tool: str, result: ToolResult) -> str | None:
         if ok is True and isinstance(checked_files, list) and not checked_files:
             return "EMPTY"
         return "OK" if ok is True else "FINDINGS" if ok is False else None
-    if tool == "skill_list":
+    if tool in {"skill_list", "skill_refresh"}:
         skills = structured.get("skills")
         if isinstance(skills, list):
             return "CATALOG" if skills else "EMPTY"
         return None
+    if tool == "skill_validate":
+        ok = structured.get("ok")
+        return "VALID" if ok is True else "FINDINGS" if ok is False else None
     if tool in {"skill_load", "skill_resource_load"}:
         ok = structured.get("ok")
         return "LOADED" if ok is True else "REJECTED" if ok is False else None
