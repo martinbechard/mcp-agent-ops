@@ -6,6 +6,8 @@
 
 from pathlib import Path
 
+from pytest import MonkeyPatch
+
 from mcp_agent_ops.verification.markdown_links import verify_markdown_links
 
 
@@ -49,3 +51,36 @@ def test_verify_markdown_links_rejects_source_patterns_outside_root(tmp_path: Pa
     assert result.ok is False
     assert result.checked_files == []
     assert result.findings[0].code == "path_outside_root"
+
+
+def test_verify_markdown_links_reads_each_target_once_per_operation(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    guide = docs / "guide.md"
+    index = docs / "index.md"
+    guide.write_text("# Guide\n\n## First\n\n## Second\n", encoding="utf-8")
+    index.write_text(
+        "[first](guide.md#first)\n[second](guide.md#second)\n",
+        encoding="utf-8",
+    )
+    reads: dict[Path, int] = {}
+    original = Path.read_text
+
+    def counted_read(
+        path: Path,
+        encoding: str | None = None,
+        errors: str | None = None,
+    ) -> str:
+        resolved = path.resolve()
+        reads[resolved] = reads.get(resolved, 0) + 1
+        return original(path, encoding=encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", counted_read)
+    result = verify_markdown_links(tmp_path, ["docs/**/*.md"])
+
+    assert result.ok is True
+    assert reads[guide.resolve()] == 1
+    assert reads[index.resolve()] == 1

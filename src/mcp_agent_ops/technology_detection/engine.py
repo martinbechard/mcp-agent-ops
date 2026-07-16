@@ -41,12 +41,37 @@ def load_yaml(path: Path) -> dict[str, object]:
     return value
 
 
-def relative(path: Path, root: Path) -> str:
-    """Return a stable project-relative evidence path when the path belongs to the project."""
+def _within_project(path: Path, root: Path) -> bool:
+    """Return whether a path remains inside the project after symlink resolution."""
     try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
+        resolved = path.resolve()
+        resolved_root = root.resolve()
+    except OSError:
+        return False
+    return resolved == resolved_root or resolved_root in resolved.parents
+
+
+def _project_path_label(path: Path, root: Path) -> str:
+    """Return a lexical project-relative diagnostic label without exposing host paths."""
+    try:
+        return path.expanduser().absolute().relative_to(root.expanduser().absolute()).as_posix()
     except ValueError:
-        return path.resolve().as_posix()
+        return path.name
+
+
+def relative(path: Path, root: Path) -> str:
+    """Return a stable project-relative evidence path without disclosing external paths."""
+    if not _within_project(path, root):
+        return "[outside-project]"
+    return _project_path_label(path, root)
+
+
+def _read_project_text(path: Path, root: Path) -> str:
+    """Read one project file only after canonical containment is rechecked."""
+    resolved = path.resolve()
+    if not _within_project(resolved, root):
+        raise OSError("project file resolves outside the project root")
+    return resolved.read_text(encoding="utf-8")
 
 
 def is_ignored(path: Path, root: Path) -> bool:
@@ -58,49 +83,74 @@ def is_ignored(path: Path, root: Path) -> bool:
     return bool(set(parts) & IGNORED_PARTS)
 
 
-def scope_files(root: Path, scope: Path) -> list[Path]:
-    """List human-relevant files in a requested file or directory scope."""
+def scope_files(root: Path, scope: Path) -> tuple[list[Path], list[str]]:
+    """List contained human-relevant files and path-escape diagnostics for one scope."""
     path = scope if scope.is_absolute() else root / scope
     if path.is_file():
-        return [path]
+        if _within_project(path, root):
+            return [path], []
+        return [], [_project_path_label(path, root)]
     if not path.is_dir():
-        return []
-    return sorted(child for child in path.rglob("*") if child.is_file() and not is_ignored(child, root))
+        return [], []
+    files: list[Path] = []
+    unsafe: list[str] = []
+    for child in path.rglob("*"):
+        if child.is_symlink() and not _within_project(child, root):
+            unsafe.append(_project_path_label(child, root))
+            continue
+        if child.is_file() and _within_project(child, root) and not is_ignored(child, root):
+            files.append(child)
+    return sorted(files), sorted(set(unsafe))
 
 
-def owner_files(directory: Path) -> list[Path]:
-    """Find supported project manifests that can own files below one directory."""
-    found = [directory / name for name in OWNER_FILE_NAMES if (directory / name).is_file()]
+def owner_files(directory: Path, root: Path) -> tuple[list[Path], list[str]]:
+    """Find contained project manifests and report manifest symlink escapes."""
+    candidates = [directory / name for name in OWNER_FILE_NAMES]
     for pattern in OWNER_FILE_GLOBS:
-        found.extend(path for path in directory.glob(pattern) if path.is_file())
-    return sorted(set(found))
+        candidates.extend(directory.glob(pattern))
+    found: list[Path] = []
+    unsafe: list[str] = []
+    for path in sorted(set(candidates)):
+        if not _within_project(path, root):
+            unsafe.append(_project_path_label(path, root))
+        elif path.is_file():
+            found.append(path)
+    return found, sorted(set(unsafe))
 
 
-def nearest_owner_files(root: Path, scope: Path, files: list[Path]) -> list[Path]:
-    """Find the nearest owning manifests without allowing sibling project contamination."""
+def nearest_owner_files(
+    root: Path,
+    scope: Path,
+    files: list[Path],
+) -> tuple[list[Path], list[str]]:
+    """Find nearest contained owner manifests and report any manifest root escape."""
     candidates = files or [scope if scope.is_absolute() else root / scope]
     owners: set[Path] = set()
+    unsafe: set[str] = set()
     for candidate in candidates:
         current = candidate.parent if candidate.is_file() else candidate
         if not current.exists():
             current = current.parent
         while current == root or root in current.parents:
-            matches = owner_files(current)
+            matches, escaped = owner_files(current, root)
+            unsafe.update(escaped)
+            if escaped:
+                break
             if matches:
                 owners.update(matches)
                 break
             if current == root:
                 break
             current = current.parent
-    return sorted(owners)
+    return sorted(owners), sorted(unsafe)
 
 
-def manifest_dependencies(paths: list[Path]) -> set[str]:
-    """Extract normalized dependency names from supported owning manifests."""
+def manifest_dependencies(paths: list[Path], root: Path | None = None) -> set[str]:
+    """Extract normalized dependency names from contained owning manifests."""
     dependencies: set[str] = set()
     for path in paths:
         try:
-            text = path.read_text(encoding="utf-8")
+            text = _read_project_text(path, root) if root is not None else path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
         if path.name == "package.json":
@@ -171,10 +221,11 @@ def glob_matches(value: str, pattern: str) -> bool:
     return re.fullmatch(expression, value) is not None
 
 
-def python_imports_module(path: Path, module: str) -> bool:
-    """Report whether parsed Python code imports a module, excluding comments and string literals."""
+def python_imports_module(path: Path, module: str, root: Path | None = None) -> bool:
+    """Report whether contained parsed Python code imports a module."""
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        text = _read_project_text(path, root) if root is not None else path.read_text(encoding="utf-8")
+        tree = ast.parse(text, filename=str(path))
     except (OSError, UnicodeDecodeError, SyntaxError):
         return False
     for node in ast.walk(tree):
@@ -236,7 +287,7 @@ def predicate_evidence(
             if not glob_matches(relative(path, root), pattern) and not glob_matches(path.name, pattern):
                 continue
             try:
-                text = path.read_text(encoding="utf-8")
+                text = _read_project_text(path, root)
             except (OSError, UnicodeDecodeError):
                 continue
             if str(expected["contains"]) in text:
@@ -249,7 +300,7 @@ def predicate_evidence(
         match = next(
             (
                 path for path in files
-                if path.suffix.lower() in extensions and python_imports_module(path, module)
+                if path.suffix.lower() in extensions and python_imports_module(path, module, root)
             ),
             None,
         )
@@ -287,12 +338,11 @@ def activation_evidence(
     entry: dict[str, object],
     root: Path,
     files: list[Path],
-    manifests: list[Path],
+    owner_evidence: list[Path],
+    dependencies: set[str],
 ) -> list[str]:
     """Return evidence when at least one complete activation branch selects the skill."""
     activation = entry.get("activation", {})
-    owner_evidence = sorted(set(manifests + [child for path in manifests for child in path.parent.iterdir() if child.is_file()]))
-    dependencies = manifest_dependencies(manifests)
     return clause_evidence(activation, root, files, owner_evidence, dependencies)
 
 
@@ -330,8 +380,36 @@ def detect_scope(
             "scopeErrors": ["scope does not exist"],
             "status": "BLOCKED",
         }
-    files = scope_files(root, scope)
-    manifests = nearest_owner_files(root, scope, files)
+    files, unsafe_scope_paths = scope_files(root, scope)
+    if unsafe_scope_paths:
+        return {
+            "scope": scope_value,
+            "pathPattern": scope_value + ("/**" if target.is_dir() else ""),
+            "skills": [],
+            "sourceEvidence": [],
+            "missingRequiredSkills": [],
+            "exclusiveConflicts": [],
+            "scopeErrors": [
+                "scope contains a path resolving outside the project root: "
+                + ", ".join(unsafe_scope_paths)
+            ],
+            "status": "BLOCKED",
+        }
+    manifests, unsafe_manifests = nearest_owner_files(root, scope, files)
+    if unsafe_manifests:
+        return {
+            "scope": scope_value,
+            "pathPattern": scope_value + ("/**" if target.is_dir() else ""),
+            "skills": [],
+            "sourceEvidence": [],
+            "missingRequiredSkills": [],
+            "exclusiveConflicts": [],
+            "scopeErrors": [
+                "owning manifest resolves outside the project root: "
+                + ", ".join(unsafe_manifests)
+            ],
+            "status": "BLOCKED",
+        }
     owner_directories = sorted({path.parent for path in manifests})
     if len(owner_directories) > 1:
         return {
@@ -348,11 +426,40 @@ def detect_scope(
             "status": "BLOCKED",
         }
     entries = {str(item["skill"]): item for item in registry.get("skills", [])}
+    owner_evidence = set(manifests)
+    unsafe_owner_evidence: set[str] = set()
+    for path in manifests:
+        for child in path.parent.iterdir():
+            if child.is_symlink() and not _within_project(child, root):
+                unsafe_owner_evidence.add(_project_path_label(child, root))
+            elif child.is_file() and _within_project(child, root):
+                owner_evidence.add(child)
+    if unsafe_owner_evidence:
+        return {
+            "scope": scope_value,
+            "pathPattern": scope_value + ("/**" if target.is_dir() else ""),
+            "skills": [],
+            "sourceEvidence": [],
+            "missingRequiredSkills": [],
+            "exclusiveConflicts": [],
+            "scopeErrors": [
+                "owning evidence resolves outside the project root: "
+                + ", ".join(sorted(unsafe_owner_evidence))
+            ],
+            "status": "BLOCKED",
+        }
+    dependencies = manifest_dependencies(manifests, root)
     selected: dict[str, dict[str, object]] = {}
     missing: list[dict[str, object]] = []
     conflicts: list[dict[str, object]] = []
     for skill, entry in entries.items():
-        evidence = activation_evidence(entry, root, files, manifests)
+        evidence = activation_evidence(
+            entry,
+            root,
+            files,
+            sorted(owner_evidence),
+            dependencies,
+        )
         if evidence:
             selected[skill] = {
                 "entry": entry,
@@ -424,7 +531,12 @@ def detect_scope(
 def detect(args: argparse.Namespace) -> tuple[dict[str, object], int]:
     """Run detection for all requested scopes and return the aggregate process exit status."""
     root = args.project_root.resolve()
-    registry = load_yaml(args.registry)
+    configured_registry = getattr(args, "registry_data", None)
+    registry = (
+        configured_registry
+        if isinstance(configured_registry, dict)
+        else load_yaml(args.registry)
+    )
     available_skills = set(args.available_skill) if args.available_skill is not None else None
     loadouts = [
         detect_scope(root, Path(value), registry, args.skills_root, available_skills)

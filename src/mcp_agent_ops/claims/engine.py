@@ -18,6 +18,7 @@ import re
 import subprocess
 from collections import Counter
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
@@ -42,6 +43,10 @@ MAX_IDENTIFIER_LENGTH = 200
 STALE_HEARTBEAT_HOURS = 24
 UTC_DAY_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2})\.jsonl$")
 SINCE_PATTERN = re.compile(r"^(\d+)([dh])$")
+_RESULT_SINK: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+    "claim_result_sink",
+    default=None,
+)
 
 
 class _ScopeError(ValueError):
@@ -481,7 +486,15 @@ def _append_event(common_directory: Path, event: dict[str, Any]) -> Path:
 
 
 def _print_result(outcome: str, **details: Any) -> None:
-    print(json.dumps({"outcome": outcome, **details}, indent=2, sort_keys=True))
+    _emit_result({"outcome": outcome, **details})
+
+
+def _emit_result(result: dict[str, Any]) -> None:
+    sink = _RESULT_SINK.get()
+    if sink is not None:
+        sink.append(result)
+        return
+    print(json.dumps(result, indent=2, sort_keys=True))
 
 
 def _journaled_result(
@@ -1152,7 +1165,7 @@ def _report(args: argparse.Namespace) -> int:
     if args.format == "text":
         print(_render_text_report(report))
     else:
-        print(json.dumps(report, indent=2, sort_keys=True))
+        _emit_result(report)
     return SUCCESS
 
 
@@ -1228,6 +1241,36 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     args = _parser().parse_args(argv)
     return args.handler(args)
+
+
+def dispatch(argv: Sequence[str]) -> tuple[dict[str, Any], int]:
+    """Dispatch one claim command and return its structured result without stdout capture.
+
+    Args:
+        argv: Complete command arguments without the executable name. Callers must request
+            JSON reporting because text reports are a CLI presentation contract.
+
+    Returns:
+        The single structured result document and stable command exit code.
+
+    Raises:
+        ValueError: If the selected handler does not emit exactly one structured result.
+
+    Command side effects and repository-global locking are identical to ``main``. Result
+    collection is context-local, so unrelated repository calls may run concurrently.
+    """
+    args = _parser().parse_args(argv)
+    captured: list[dict[str, Any]] = []
+    token = _RESULT_SINK.set(captured)
+    try:
+        exit_code = args.handler(args)
+    finally:
+        _RESULT_SINK.reset(token)
+    if len(captured) != 1:
+        raise ValueError(
+            f"Claim command emitted {len(captured)} structured results; expected exactly one."
+        )
+    return captured[0], exit_code
 
 
 if __name__ == "__main__":

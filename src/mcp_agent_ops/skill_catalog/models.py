@@ -26,8 +26,26 @@ class SkillEntry(BaseModel):
 class SkillCatalogResult(BaseModel):
     """Return the configured roots and all precedence-resolved skill entries."""
 
+    revision: str
     roots: list[str]
     skills: list[SkillEntry]
+
+
+class PublishedSkillEntry(BaseModel):
+    """Describe one model-facing skill without exposing host filesystem paths."""
+
+    name: str
+    description: str
+    digest: str
+    resources: list[str] = Field(default_factory=list)
+    shadowed_count: int = 0
+
+
+class PublishedSkillCatalog(BaseModel):
+    """Return the model-facing catalog revision and path-free skill metadata."""
+
+    revision: str
+    skills: list[PublishedSkillEntry]
 
 
 class LoadedSkill(BaseModel):
@@ -46,3 +64,54 @@ class LoadedSkillResource(BaseModel):
     digest: str
     content: str | None = None
     data_base64: str | None = None
+
+
+class BatchLoadedSkill(BaseModel):
+    """Return one model-facing skill document without exposing host filesystem paths."""
+
+    name: str
+    digest: str
+    content: str
+    resources: list[str] = Field(default_factory=list)
+
+
+class SkillLoadError(BaseModel):
+    """Describe one bounded batch-load rejection without returning partial skill content."""
+
+    code: str
+    message: str
+    name: str | None = None
+
+
+class SkillLoadResult(BaseModel):
+    """Return an ordered all-or-nothing set of complete skill documents."""
+
+    ok: bool
+    catalog_revision: str
+    skills: list[BatchLoadedSkill] = Field(default_factory=list)
+    errors: list[SkillLoadError] = Field(default_factory=list)
+
+
+class SkillResourceRequest(BaseModel):
+    """Identify one supporting resource beneath a resolved skill package."""
+
+    skill_name: str
+    resource_path: str
+
+
+class SkillResourceLoadError(BaseModel):
+    """Describe one batch resource rejection without returning partial content."""
+
+    code: str
+    message: str
+    skill_name: str | None = None
+    resource_path: str | None = None
+
+
+class SkillResourceLoadResult(BaseModel):
+    """Return an ordered all-or-nothing set of supporting skill resources."""
+
+    ok: bool
+    catalog_revision: str
+    resources: list[LoadedSkillResource] = Field(default_factory=list)
+    errors: list[SkillResourceLoadError] = Field(default_factory=list)

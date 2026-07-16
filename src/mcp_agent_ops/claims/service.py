@@ -4,11 +4,7 @@
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
-import json
 from collections.abc import Sequence
-from contextlib import redirect_stdout
-from io import StringIO
-from threading import Lock
 from typing import Any
 
 from pydantic import BaseModel
@@ -23,11 +19,8 @@ class ClaimCommandResult(BaseModel):
     result: dict[str, Any]
 
 
-_COMMAND_OUTPUT_LOCK = Lock()
-
-
 def run_claim_command(arguments: Sequence[str]) -> ClaimCommandResult:
-    """Execute the copied claim engine and decode its stable JSON output.
+    """Execute the copied claim engine through its structured dispatch boundary.
 
     Args:
         arguments: Complete claim arguments without the executable name.
@@ -35,15 +28,9 @@ def run_claim_command(arguments: Sequence[str]) -> ClaimCommandResult:
     Returns:
         The engine's process-equivalent exit code and decoded JSON document.
 
-    The copied engine prints its public result. Standard-output capture is process-global,
-    so calls in one MCP process are briefly serialized. Cross-process correctness still
+    Independent repositories may execute concurrently. Cross-process correctness still
     comes from the repository-global file lock, and every command performs its normal
     registry, worktree, or journal side effects.
     """
-    output = StringIO()
-    with _COMMAND_OUTPUT_LOCK, redirect_stdout(output):
-        exit_code = engine.main(arguments)
-    decoded = json.loads(output.getvalue())
-    if not isinstance(decoded, dict):
-        raise ValueError("Claim engine did not return a JSON object.")
-    return ClaimCommandResult(exit_code=exit_code, result=decoded)
+    result, exit_code = engine.dispatch(arguments)
+    return ClaimCommandResult(exit_code=exit_code, result=result)

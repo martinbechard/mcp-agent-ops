@@ -5,19 +5,30 @@
 # Test plan: docs/reference/test-plan.md
 
 import os
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 
+import yaml
 from fastmcp import FastMCP
 
 from mcp_agent_ops.claims.service import ClaimCommandResult, run_claim_command
 from mcp_agent_ops.skill_catalog.catalog import SkillCatalog
-from mcp_agent_ops.skill_catalog.models import LoadedSkill, LoadedSkillResource, SkillCatalogResult
+from mcp_agent_ops.skill_catalog.models import (
+    BatchLoadedSkill,
+    LoadedSkillResource,
+    PublishedSkillCatalog,
+    SkillLoadResult,
+    SkillResourceLoadResult,
+    SkillResourceRequest,
+)
 from mcp_agent_ops.skill_validation.service import SkillValidationResult, validate_skills
+from mcp_agent_ops.technology_detection.engine import load_yaml as load_detection_registry
 from mcp_agent_ops.technology_detection.service import TechnologyDetectionResult
 from mcp_agent_ops.technology_detection.service import detect_technology_skills as detect_domain
 from mcp_agent_ops.verification.markdown_links import verify_markdown_links as verify_markdown_links_domain
 from mcp_agent_ops.verification.models import VerificationReport
+from mcp_agent_ops.verification.paths import resolve_within_roots
 from mcp_agent_ops.verification.yaml_files import verify_yaml as verify_yaml_domain
 
 
@@ -63,35 +74,93 @@ def configured_detection_registry() -> Path | None:
     return Path(value).expanduser() if value else None
 
 
+def configured_workspace_roots() -> list[Path]:
+    """Read administrator-configured roots for model-supplied repository paths."""
+    raw = os.environ.get("MCP_AGENT_OPS_WORKSPACE_ROOTS", "")
+    return [Path(value).expanduser() for value in raw.split(os.pathsep) if value]
+
+
 def create_server(
     skill_roots: Sequence[Path] | None = None,
     detection_registry: Path | None = None,
+    workspace_roots: Sequence[Path] | None = None,
 ) -> FastMCP:
-    """Create the stateless MCP agent-operations server.
+    """Create the MCP agent-operations server with immutable read snapshots.
 
     Args:
         skill_roots: Optional precedence-ordered roots used instead of environment
-            configuration. A fresh catalog snapshot is built for every skill operation.
+            configuration. One immutable catalog snapshot is reused until explicit refresh.
         detection_registry: Optional methodology-owned technology detection registry used
             instead of `MCP_AGENT_OPS_DETECTION_REGISTRY`.
+        workspace_roots: Optional allowed roots for repositories, projects, verification
+            targets, and worktree destinations supplied through model-facing calls.
 
     Returns:
         A FastMCP server ready for in-memory testing or stdio execution.
 
     Claim tools mutate target Git-global claim state. Verification and skill operations
-    are read-only. No correctness rule relies on server-process memory.
+    are read-only. Catalog and detection snapshots improve reads but never replace
+    disk-authoritative claim or skill state.
     """
     roots = list(skill_roots) if skill_roots is not None else configured_skill_roots()
     registry = detection_registry or configured_detection_registry()
+    workspaces = (
+        list(workspace_roots)
+        if workspace_roots is not None
+        else configured_workspace_roots()
+    )
     mcp = FastMCP("MCP Agent Operations")
+    catalog_lock = threading.Lock()
+    catalog_snapshot: SkillCatalog | None = None
+    detection_lock = threading.Lock()
+    detection_snapshot: dict[str, object] | None = None
+
+    def build_catalog() -> SkillCatalog:
+        try:
+            return SkillCatalog.from_roots(roots)
+        except (OSError, UnicodeError, ValueError, yaml.YAMLError):
+            raise ValueError("Configured skill catalog is invalid.") from None
 
     def catalog() -> SkillCatalog:
-        return SkillCatalog.from_roots(roots)
+        nonlocal catalog_snapshot
+        with catalog_lock:
+            if catalog_snapshot is None:
+                catalog_snapshot = build_catalog()
+            return catalog_snapshot
+
+    def refresh_catalog() -> SkillCatalog:
+        nonlocal catalog_snapshot
+        replacement = build_catalog()
+        with catalog_lock:
+            catalog_snapshot = replacement
+        return replacement
+
+    def workspace_path(value: str) -> Path:
+        return resolve_within_roots(workspaces, value, "workspace")
+
+    def skill_path(value: str) -> Path:
+        return resolve_within_roots(roots, value, "skill")
+
+    def detection_catalog() -> dict[str, object]:
+        nonlocal detection_snapshot
+        if registry is None:
+            raise ValueError(
+                "Technology detection requires MCP_AGENT_OPS_DETECTION_REGISTRY configuration."
+            )
+        with detection_lock:
+            if detection_snapshot is None:
+                try:
+                    detection_snapshot = load_detection_registry(registry)
+                except (OSError, UnicodeError, ValueError, yaml.YAMLError):
+                    raise ValueError(
+                        "Configured technology detection registry is invalid."
+                    ) from None
+            return detection_snapshot
 
     @mcp.tool
     def claim_status(repository: str) -> ClaimCommandResult:
         """Return the authoritative live claim registry for one Git repository."""
-        return run_claim_command(["--repo", repository, "status"])
+        return run_claim_command(["--repo", str(workspace_path(repository)), "status"])
 
     @mcp.tool
     def claim_acquire(
@@ -119,7 +188,7 @@ def create_server(
         """
         arguments = [
             "--repo",
-            repository,
+            str(workspace_path(repository)),
             "acquire",
             "--claim-id",
             claim_id,
@@ -137,7 +206,7 @@ def create_server(
         if branch:
             arguments.extend(("--branch", branch))
         if worktree_path:
-            arguments.extend(("--worktree-path", worktree_path))
+            arguments.extend(("--worktree-path", str(workspace_path(worktree_path))))
         if allow_recovery:
             arguments.append("--allow-recovery")
         _append_scope(arguments, files, trees, resources, all_files, scope_reason, compat_file_directories)
@@ -155,19 +224,33 @@ def create_server(
         compat_file_directories: bool = False,
     ) -> ClaimCommandResult:
         """Atomically add net-new scope to one active claim without weakening existing ownership."""
-        arguments = ["--repo", repository, "extend", "--claim-id", claim_id]
+        arguments = [
+            "--repo",
+            str(workspace_path(repository)),
+            "extend",
+            "--claim-id",
+            claim_id,
+        ]
         _append_scope(arguments, files, trees, resources, all_files, scope_reason, compat_file_directories)
         return run_claim_command(arguments)
 
     @mcp.tool
     def claim_heartbeat(repository: str, claim_id: str) -> ClaimCommandResult:
         """Refresh one active claim heartbeat in the repository-global registry."""
-        return run_claim_command(["--repo", repository, "heartbeat", "--claim-id", claim_id])
+        return run_claim_command(
+            ["--repo", str(workspace_path(repository)), "heartbeat", "--claim-id", claim_id]
+        )
 
     @mcp.tool
     def claim_release(repository: str, claim_id: str, no_change: bool = False) -> ClaimCommandResult:
         """Release a clean committed claim or an explicitly declared no-change claim."""
-        arguments = ["--repo", repository, "release", "--claim-id", claim_id]
+        arguments = [
+            "--repo",
+            str(workspace_path(repository)),
+            "release",
+            "--claim-id",
+            claim_id,
+        ]
         if no_change:
             arguments.append("--no-change")
         return run_claim_command(arguments)
@@ -176,20 +259,34 @@ def create_server(
     def claim_maintain_journal(repository: str, hot_days: int = 2) -> ClaimCommandResult:
         """Archive complete UTC claim-event days while retaining the configured hot window."""
         return run_claim_command(
-            ["--repo", repository, "maintain-journal", "--hot-days", str(hot_days)]
+            [
+                "--repo",
+                str(workspace_path(repository)),
+                "maintain-journal",
+                "--hot-days",
+                str(hot_days),
+            ]
         )
 
     @mcp.tool
-    def claim_report(repository: str, since: str = "2d", output_format: str = "json") -> ClaimCommandResult:
+    def claim_report(repository: str, since: str = "2d") -> ClaimCommandResult:
         """Report claim contention and lifecycle metrics without mutating the live registry."""
         return run_claim_command(
-            ["--repo", repository, "report", "--since", since, "--format", output_format]
+            [
+                "--repo",
+                str(workspace_path(repository)),
+                "report",
+                "--since",
+                since,
+                "--format",
+                "json",
+            ]
         )
 
     @mcp.tool
     def verify_yaml(repository_root: str, paths: list[str]) -> VerificationReport:
         """Validate exact YAML files, including duplicate keys, with structured diagnostics."""
-        return verify_yaml_domain(Path(repository_root), paths)
+        return verify_yaml_domain(workspace_path(repository_root), paths)
 
     @mcp.tool
     def verify_markdown_links(
@@ -197,17 +294,19 @@ def create_server(
         patterns: list[str] | None = None,
     ) -> VerificationReport:
         """Verify local Markdown targets and anchors selected by simple root-relative globs."""
-        return verify_markdown_links_domain(Path(repository_root), patterns or ["**/*.md"])
+        return verify_markdown_links_domain(
+            workspace_path(repository_root), patterns or ["**/*.md"]
+        )
 
     @mcp.tool
-    def skill_list() -> SkillCatalogResult:
-        """List configured skills with descriptions, digests, resources, and shadowing evidence."""
-        return catalog().result()
+    def skill_list() -> PublishedSkillCatalog:
+        """List path-free skill metadata, digests, resources, and shadowing counts."""
+        return catalog().public_result()
 
     @mcp.tool
-    def skill_read(name: str) -> LoadedSkill:
-        """Read one complete precedence-resolved `SKILL.md` document on demand."""
-        return catalog().read_skill(name)
+    def skill_read(name: str) -> BatchLoadedSkill:
+        """Read one complete precedence-resolved skill without host filesystem paths."""
+        return catalog().read_model_skill(name)
 
     @mcp.tool
     def skill_read_resource(name: str, resource_path: str) -> LoadedSkillResource:
@@ -215,29 +314,59 @@ def create_server(
         return catalog().read_resource(name, resource_path)
 
     @mcp.tool
+    def skill_load(names: list[str]) -> SkillLoadResult:
+        """Load several complete skills in one ordered all-or-nothing operation."""
+        return catalog().load_skills(names)
+
+    @mcp.tool
+    def skill_resource_load(
+        requests: list[SkillResourceRequest],
+    ) -> SkillResourceLoadResult:
+        """Load several supporting resources in one ordered all-or-nothing operation."""
+        return catalog().load_resources(requests)
+
+    @mcp.tool
+    def skill_refresh() -> PublishedSkillCatalog:
+        """Atomically replace the process-local catalog snapshot from configured roots."""
+        return refresh_catalog().public_result()
+
+    @mcp.tool
     def skill_validate(paths: list[str]) -> SkillValidationResult:
         """Validate Agent Skill roots, directories, or exact `SKILL.md` files."""
-        return validate_skills([Path(path).expanduser() for path in paths])
+        return validate_skills(
+            [skill_path(path) for path in paths],
+            allowed_roots=roots,
+        )
 
     @mcp.tool
     def detect_technology_skills(project_root: str, scopes: list[str]) -> TechnologyDetectionResult:
         """Detect required technology skills for project scopes using the configured registry."""
         if registry is None:
-            raise ValueError("Technology detection requires MCP_AGENT_OPS_DETECTION_REGISTRY configuration.")
-        current_catalog = catalog().result()
+            raise ValueError(
+                "Technology detection requires MCP_AGENT_OPS_DETECTION_REGISTRY configuration."
+            )
+        current_catalog = catalog().public_result()
         skills_root = roots[0] if roots else registry.parent
-        return detect_domain(
-            Path(project_root),
+        detected = detect_domain(
+            workspace_path(project_root),
             scopes,
             registry,
             skills_root,
             [entry.name for entry in current_catalog.skills],
+            registry_data=detection_catalog(),
         )
+        public_result = detected.model_copy(deep=True)
+        public_result.result["projectRoot"] = "."
+        runtime_catalog = public_result.result.get("runtimeSkillCatalog")
+        if isinstance(runtime_catalog, dict):
+            runtime_catalog.pop("skillsRoot", None)
+            runtime_catalog["catalogRevision"] = current_catalog.revision
+        return public_result
 
     @mcp.resource("skill://catalog", mime_type="application/json")
     def skill_catalog_resource() -> str:
         """Return the current structured skill catalog as JSON."""
-        return catalog().result().model_dump_json()
+        return catalog().public_result().model_dump_json()
 
     @mcp.resource("skill://{name}", mime_type="text/markdown")
     def skill_document_resource(name: str) -> str:

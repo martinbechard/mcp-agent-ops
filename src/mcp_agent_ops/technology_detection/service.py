@@ -26,6 +26,7 @@ def detect_technology_skills(
     registry: Path,
     skills_root: Path,
     available_skills: list[str] | None = None,
+    registry_data: dict[str, object] | None = None,
 ) -> TechnologyDetectionResult:
     """Detect technology skills for selected project scopes using copied rules.
 
@@ -36,6 +37,8 @@ def detect_technology_skills(
         skills_root: Runtime skill root used for availability metadata.
         available_skills: Optional complete runtime catalog; when supplied it is the
             authority for skill availability across multiple roots.
+        registry_data: Optional trusted parsed registry snapshot. When absent, the
+            service reads ``registry`` for compatibility with direct callers.
 
     Returns:
         The detector's stable exit code and structured aggregate result. Detection is
@@ -47,6 +50,7 @@ def detect_technology_skills(
         registry=registry,
         skills_root=skills_root,
         available_skill=available_skills,
+        registry_data=registry_data,
     )
     result, exit_code = detect(arguments)
     return TechnologyDetectionResult(exit_code=exit_code, result=result)

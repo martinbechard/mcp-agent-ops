@@ -18,12 +18,24 @@
 
 - The service discovers skills from configured roots by reading complete `SKILL.md` files.
 - Catalog entries include stable names, descriptions, paths, content digests, and available supporting resources.
-- A caller can retrieve one complete skill or one supporting resource on demand.
+- Manifest content and its digest remain paired in one immutable process-local snapshot.
+- A caller can load several complete skills or supporting resources in one ordered, bounded, all-or-nothing operation.
+- All model-facing catalog and skill-document results omit host filesystem paths.
+- An explicit refresh builds a replacement snapshot and publishes it atomically.
 - Duplicate skill names resolve by configured root precedence and remain visible as shadowed entries.
-- Resolved resource paths cannot escape the owning skill directory.
+- Resolved resource paths must be relative, published in the active snapshot, and unable to escape the owning skill directory.
+
+## Skill Validation and Detection
+
+- The service validates exact skill manifests, skill directories, and configured skill roots.
+- Validation rejects nested manifests and adapter metadata that resolve outside configured skill roots.
+- The service detects technology skills from a trusted configured registry and the complete active skill catalog.
+- Detection blocks a scope when a nested source, owner manifest, or owner-evidence path resolves outside its project root.
+- Detection parses the registry once per server process and computes manifest evidence once per requested scope.
 
 ## Protocol
 
 - The service starts over stdio without writing non-protocol output to standard output.
 - Tool results are structured and schema-described.
 - Skill content is available as MCP resources and through tool fallbacks for tool-only hosts.
+- Claim results are produced through a structured in-process dispatcher while preserving the direct CLI contract.

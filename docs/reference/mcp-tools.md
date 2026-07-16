@@ -16,6 +16,8 @@ The server intentionally publishes small named operations so an LLM supplies dat
 
 Claim results contain `exit_code` and the copied engine's structured `result`. The result outcome remains authoritative: successful calls can have different outcomes, and unsuccessful ownership attempts such as `WAIT` are valid structured results rather than protocol failures.
 
+Repository and worktree paths must be absolute and resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`.
+
 Example acquisition arguments:
 
 ```json
@@ -38,24 +40,31 @@ Example acquisition arguments:
 
 Verification results contain `ok`, `checked_files`, and structured `findings`. They never mutate the inspected repository or use the network.
 
+`repository_root` must be absolute and resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`.
+
 ## Skills
 
 | Tool | Required arguments | Purpose |
 |---|---|---|
-| `skill_list` | none | Return resolved names, descriptions, digests, resources, and shadowed definitions. |
-| `skill_read` | `name` | Return one complete `SKILL.md`. |
+| `skill_list` | none | Return path-free names, descriptions, digests, resources, and shadowing counts. |
+| `skill_read` | `name` | Return one complete path-free `SKILL.md` result. |
 | `skill_read_resource` | `name`, `resource_path` | Read one safe supporting resource. |
+| `skill_load` | `names` | Load one to thirty-two complete skills in requested order with no host paths in the result. |
+| `skill_resource_load` | `requests` | Load one to sixty-four supporting resources in requested order. |
+| `skill_refresh` | none | Build and atomically publish a new process-local skill catalog snapshot. |
 | `skill_validate` | `paths` | Run the copied Agent Skill validator. |
 | `detect_technology_skills` | `project_root`, `scopes` | Run copied evidence-based technology detection using server configuration. |
 
-Skill roots come from `MCP_AGENT_OPS_SKILL_ROOTS`. Technology detection additionally requires `MCP_AGENT_OPS_DETECTION_REGISTRY`.
+All model-facing catalog and skill-document results omit configured roots, manifest paths, and shadowed paths. `skill_load` and `skill_resource_load` are bounded, all-or-nothing operations: invalid, duplicate, missing, unsafe, or oversized requests return an error-only result rather than partial content. Every batch result includes `catalog_revision`; each loaded skill or resource also carries its own SHA-256 digest. A resource must be listed in the active catalog snapshot, so newly added resources require `skill_refresh`. Resource contents are read on demand and their returned digest identifies the exact bytes.
+
+Skill roots come from `MCP_AGENT_OPS_SKILL_ROOTS`. Validation paths and every discovered manifest or metadata file must resolve beneath those roots. Technology detection additionally requires `MCP_AGENT_OPS_DETECTION_REGISTRY`; its project path and every discovered source, owner manifest, and owner-evidence file must remain beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`. Model-facing validation and detection results use relative identities rather than configured host paths. The parsed technology registry remains fixed until server restart.
 
 ## Resources
 
 | URI | Content |
 |---|---|
-| `skill://catalog` | Current structured catalog JSON. |
-| `skill://{name}` | Complete selected skill document. |
+| `skill://catalog` | Active structured catalog snapshot as JSON. |
+| `skill://{name}` | Complete selected skill document from the active snapshot. |
 | `skill-resource://{name}/{resource_path}` | Selected supporting text or binary resource. |
 
 Tool fallbacks remain available because some MCP hosts do not expose resources directly to their agents.

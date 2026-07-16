@@ -70,24 +70,59 @@ def split_frontmatter(text: str) -> tuple[dict[str, object], bool]:
     return {}, False
 
 
-def skill_files_from_path(path: Path) -> list[Path]:
-    """Expand a root, skill directory, or exact manifest into skill files."""
+def _resolved_within_roots(path: Path, allowed_roots: list[Path] | None) -> Path | None:
+    """Resolve a validation path only when it remains under an allowed root."""
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+    if allowed_roots is None:
+        return resolved
+    resolved_roots = [root.resolve() for root in allowed_roots]
+    if any(resolved == root or root in resolved.parents for root in resolved_roots):
+        return resolved
+    return None
+
+
+def skill_files_from_path(
+    path: Path,
+    allowed_roots: list[Path] | None = None,
+) -> list[Path]:
+    """Expand a root, skill directory, or exact manifest without following root escapes."""
     if path.name == SKILL_FILE_NAME:
         return [path]
-    if (path / SKILL_FILE_NAME).is_file():
-        return [path / SKILL_FILE_NAME]
+    exact = path / SKILL_FILE_NAME
+    if _resolved_within_roots(exact, allowed_roots) is None:
+        return [exact]
+    if exact.is_file():
+        return [exact]
     if path.is_dir():
-        return sorted(child / SKILL_FILE_NAME for child in path.iterdir() if (child / SKILL_FILE_NAME).is_file())
+        skill_files: list[Path] = []
+        for child in path.iterdir():
+            candidate = child / SKILL_FILE_NAME
+            if _resolved_within_roots(candidate, allowed_roots) is None:
+                if child.is_symlink():
+                    skill_files.append(candidate)
+                continue
+            if candidate.is_file():
+                skill_files.append(candidate)
+        return sorted(skill_files)
     return [path / SKILL_FILE_NAME]
 
 
-def validate_skill_file(skill_file: Path) -> list[SkillFinding]:
-    """Validate one Agent Skill manifest and its optional OpenAI metadata."""
+def validate_skill_file(
+    skill_file: Path,
+    allowed_roots: list[Path] | None = None,
+) -> list[SkillFinding]:
+    """Validate one Agent Skill manifest and metadata inside optional allowed roots."""
     findings: list[SkillFinding] = []
-    if not skill_file.is_file():
+    resolved_skill_file = _resolved_within_roots(skill_file, allowed_roots)
+    if resolved_skill_file is None:
+        return [SkillFinding(skill_file, "path resolves outside configured skill roots")]
+    if not resolved_skill_file.is_file():
         return [SkillFinding(skill_file, "SKILL.md is missing")]
 
-    frontmatter, parsed = split_frontmatter(skill_file.read_text(encoding="utf-8"))
+    frontmatter, parsed = split_frontmatter(resolved_skill_file.read_text(encoding="utf-8"))
     if "__yaml_error__" in frontmatter:
         return [SkillFinding(skill_file, f"frontmatter YAML is invalid: {frontmatter['__yaml_error__']}")]
     if not parsed:
@@ -121,21 +156,27 @@ def validate_skill_file(skill_file: Path) -> list[SkillFinding]:
         if len(normalized_description) > MAX_DESCRIPTION_LENGTH:
             findings.append(SkillFinding(skill_file, f"frontmatter description must be at most {MAX_DESCRIPTION_LENGTH} characters"))
 
-    findings.extend(validate_openai_metadata(skill_file.parent))
+    findings.extend(validate_openai_metadata(skill_file.parent, allowed_roots))
 
     return findings
 
 
-def validate_openai_metadata(skill_directory: Path) -> list[SkillFinding]:
-    """Validate optional `agents/openai.yaml` metadata for one skill directory."""
+def validate_openai_metadata(
+    skill_directory: Path,
+    allowed_roots: list[Path] | None = None,
+) -> list[SkillFinding]:
+    """Validate optional `agents/openai.yaml` metadata inside optional allowed roots."""
     metadata_path = skill_directory / AGENTS_FOLDER_NAME / OPENAI_METADATA_FILE_NAME
-    if not metadata_path.exists():
+    resolved_metadata_path = _resolved_within_roots(metadata_path, allowed_roots)
+    if resolved_metadata_path is None:
+        return [SkillFinding(metadata_path, "path resolves outside configured skill roots")]
+    if not resolved_metadata_path.exists():
         return []
-    if not metadata_path.is_file():
+    if not resolved_metadata_path.is_file():
         return [SkillFinding(metadata_path, "openai.yaml must be a file")]
 
     try:
-        metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
+        metadata = yaml.safe_load(resolved_metadata_path.read_text(encoding="utf-8"))
     except yaml.YAMLError as error:
         return [SkillFinding(metadata_path, f"openai.yaml YAML is invalid: {error}")]
 
@@ -177,16 +218,19 @@ def validate_openai_metadata(skill_directory: Path) -> list[SkillFinding]:
     return findings
 
 
-def validate_skill_paths(paths: list[Path]) -> list[SkillFinding]:
-    """Validate every skill resolved from the requested roots and paths."""
+def validate_skill_paths(
+    paths: list[Path],
+    allowed_roots: list[Path] | None = None,
+) -> list[SkillFinding]:
+    """Validate every requested skill while enforcing optional allowed roots."""
     findings: list[SkillFinding] = []
     for path in paths:
-        skill_files = skill_files_from_path(path)
+        skill_files = skill_files_from_path(path, allowed_roots)
         if not skill_files:
             findings.append(SkillFinding(path, "no skill files found"))
             continue
         for skill_file in skill_files:
-            findings.extend(validate_skill_file(skill_file))
+            findings.extend(validate_skill_file(skill_file, allowed_roots))
     return findings
 
 

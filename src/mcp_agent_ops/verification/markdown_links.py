@@ -60,6 +60,19 @@ def verify_markdown_links(root: Path, patterns: Sequence[str]) -> VerificationRe
     resolved_root = root.resolve()
     findings: list[VerificationFinding] = []
     selected: set[Path] = set()
+    text_cache: dict[Path, str] = {}
+    anchor_cache: dict[Path, set[str]] = {}
+
+    def read_text(path: Path) -> str:
+        if path not in text_cache:
+            text_cache[path] = path.read_text(encoding="utf-8")
+        return text_cache[path]
+
+    def anchors(path: Path) -> set[str]:
+        if path not in anchor_cache:
+            anchor_cache[path] = _anchors(read_text(path))
+        return anchor_cache[path]
+
     for pattern in dict.fromkeys(patterns):
         try:
             validate_glob_pattern(pattern)
@@ -78,7 +91,7 @@ def verify_markdown_links(root: Path, patterns: Sequence[str]) -> VerificationRe
         relative_source = source.relative_to(resolved_root).as_posix()
         checked.append(relative_source)
         try:
-            text = source.read_text(encoding="utf-8")
+            text = read_text(source)
         except UnicodeDecodeError as error:
             findings.append(VerificationFinding(code="invalid_utf8", message=str(error), path=relative_source))
             continue
@@ -113,7 +126,7 @@ def verify_markdown_links(root: Path, patterns: Sequence[str]) -> VerificationRe
                 continue
             if parsed.fragment and target.is_file():
                 try:
-                    target_anchors = _anchors(target.read_text(encoding="utf-8"))
+                    target_anchors = anchors(target)
                 except UnicodeDecodeError as error:
                     findings.append(
                         VerificationFinding(code="invalid_utf8", message=str(error), path=relative_source)

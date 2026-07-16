@@ -11,13 +11,15 @@ CLI user -> CLI adapter -----^
 
 - `claims` owns registry locking, scope overlap, worktree selection, lifecycle events, journal maintenance, and reporting.
 - `verification` owns deterministic YAML and Markdown checks.
-- `skill_catalog` owns root precedence, metadata extraction, digests, and safe content retrieval.
+- `skill_catalog` owns root precedence, metadata extraction, immutable manifest snapshots, batch limits, digests, and safe content retrieval.
+- `skill_validation` owns deterministic Agent Skill structure validation.
+- `technology_detection` owns evidence-based skill selection from a trusted parsed registry.
 
 No domain module depends on FastMCP. Adapters translate typed requests to domain calls and translate domain results to stable structured responses.
 
 ## Claim compatibility
 
-The first release preserves the current `claim.py` registry, journal, output, and exit-code contracts. The CLI adapter is retained as an operational fallback and as black-box compatibility evidence. MCP tools invoke the same in-process command service, serialized only around standard-stream capture; repository-global file locks remain the cross-process authority.
+The CLI adapter preserves the accepted `claim.py` registry, journal, output, and exit-code contracts as an operational fallback and black-box compatibility surface. MCP tools use a structured in-process dispatcher rather than capturing standard output. Repository-global file locks remain the cross-process ownership authority, while unrelated repositories can proceed concurrently inside one MCP server.
 
 ## Verification boundary
 
@@ -25,8 +27,16 @@ Verification operations are deliberately composable rather than embedding `dev-m
 
 ## Skill-loading boundary
 
-The server provides discovery and content retrieval, but it does not claim that a model has retained a skill. Each agent harness owns context insertion and per-task load receipts. The server reports immutable content digests so a harness can avoid redundant loading safely.
+The server provides path-free discovery and content retrieval, but it does not claim that a model has retained a skill. Each agent harness owns context insertion and per-task load receipts. The server reports immutable manifest content and digests so a harness can bind evidence to exact bytes; configured roots and manifest provenance stay inside the domain layer.
+
+One catalog snapshot is built lazily per server process. Ordinary list and load operations reuse it, eliminating repeated tree scans. `skill_refresh` builds a complete replacement outside the publication lock and then swaps it atomically, so readers observe either the old or new revision. Resource paths are part of the catalog revision; resource bytes remain progressively loaded and carry an independent digest.
+
+The technology registry is parsed once per server process. A detection call computes owner evidence and manifest dependencies once per requested scope, then evaluates all configured skill predicates against that shared evidence.
+
+## Filesystem boundaries
+
+The host configures separate skill roots and workspace roots. Model-supplied repository, project, verification, validation, and worktree paths are resolved only beneath those boundaries after symlink resolution. Skill validation and technology detection repeat containment at each nested read boundary, so a safe top-level directory cannot delegate access through an escaping manifest, metadata, source, or owner-evidence symlink. Model-facing catalog, validation, and detection results omit configured host paths. The boundary is reproducibility and host-state protection for ordinary agent work; it is not a general hostile-code sandbox.
 
 ## Transport
 
-The initial transport is stdio. A server process may be short-lived, so no correctness rule relies on process memory. An HTTP transport can be added later without changing domain interfaces.
+The transport is stdio. Process memory is used only for immutable read snapshots; disk remains authoritative and separate server processes continue coordinating claim mutations through repository-global state. An HTTP transport can be added later without changing domain interfaces.

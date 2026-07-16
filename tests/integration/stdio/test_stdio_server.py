@@ -31,5 +31,19 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
     async with Client(transport, timeout=15) as client:
         names = {tool.name for tool in await client.list_tools()}
         assert "skill_list" in names
+        assert "skill_load" in names
+        assert "skill_refresh" in names
         result = await client.call_tool("skill_read", {"name": "example"})
-        assert result.structured_content["entry"]["description"] == "Stdio example."
+        assert result.structured_content["name"] == "example"
+        assert "entry" not in result.structured_content
+        assert "path" not in result.structured_content
+        first = await client.call_tool("skill_load", {"names": ["example"]})
+        (skill / "SKILL.md").write_text(
+            "---\nname: example\ndescription: Stdio example.\n---\n\n# Changed\n",
+            encoding="utf-8",
+        )
+        unchanged = await client.call_tool("skill_load", {"names": ["example"]})
+        assert unchanged.structured_content == first.structured_content
+        await client.call_tool("skill_refresh", {})
+        refreshed = await client.call_tool("skill_load", {"names": ["example"]})
+        assert refreshed.structured_content["skills"][0]["content"].endswith("# Changed\n")

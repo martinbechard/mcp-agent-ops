@@ -2,15 +2,17 @@
 
 `mcp-agent-ops` is a local stdio MCP server for deterministic agent-development operations that otherwise cause repeated shell and generated Python calls.
 
-The initial service owns three capability groups:
+The service owns five capability groups:
 
 - repository claims, worktree isolation, event journaling, archival, and contention reporting;
 - reusable YAML and Markdown verification operations;
-- structured discovery and on-demand reading of installed Agent Skills.
+- snapshot-based discovery and batched loading of installed Agent Skills;
+- Agent Skill validation; and
+- evidence-based technology-skill detection.
 
 The domain packages are independent of FastMCP. The installed `mcp-agent-ops` command starts the FastMCP stdio server, while `mcp-agent-ops-claims` preserves a direct CLI surface for claim coordination and recovery.
 
-The initial claim engine, technology detector, and Agent Skill validator are copied from the accepted `dev-methodology` implementations. See `docs/reference/copied-scripts.md` for exact provenance and compatibility coverage.
+The claim engine, technology detector, and Agent Skill validator began as copies of the accepted `dev-methodology` implementations. See `docs/reference/copied-scripts.md` for exact provenance, intentional adapter changes, and compatibility coverage.
 
 See `docs/reference/mcp-tools.md` for the complete small-call tool and resource surface.
 
@@ -69,7 +71,15 @@ Configure an MCP host to run:
 mcp-agent-ops
 ```
 
-The server uses stdio by default. Configure readable skill roots through `MCP_AGENT_OPS_SKILL_ROOTS`, using the operating system path separator between roots. Configure the methodology-owned technology registry through `MCP_AGENT_OPS_DETECTION_REGISTRY`. Repository arguments remain explicit per tool call.
+The server uses stdio by default. Configure all three path boundaries before exposing it to an agent:
+
+- `MCP_AGENT_OPS_SKILL_ROOTS` contains precedence-ordered readable skill roots, separated by the operating system path separator. A root may contain child skill directories or may be one exact skill directory containing `SKILL.md`.
+- `MCP_AGENT_OPS_DETECTION_REGISTRY` identifies the trusted methodology-owned technology registry.
+- `MCP_AGENT_OPS_WORKSPACE_ROOTS` contains allowed project and worktree roots, separated by the operating system path separator.
+
+Repository, project, verification, worktree, and validation paths supplied through tools must be absolute and resolve beneath their configured boundary. Catalog discovery, skill validation, and technology detection recheck every nested manifest, metadata file, source file, and supporting resource before reading it. The server rejects missing boundary configuration, traversal, and symlink escape rather than granting ambient filesystem access.
+
+The skill catalog is built lazily and reused for the life of the server process. `skill_refresh` atomically publishes a new catalog snapshot after installed skills change. Technology registry configuration is also cached and takes effect after restarting the server. Claim state remains disk-authoritative and coordinates across server processes.
 
 ## Create a release
 
@@ -89,7 +99,7 @@ Releases use semantic versions. The Git tag must be `v` followed by the exact `p
 3. Commit the version and lockfile, push `main`, and wait for its CI run to succeed:
 
    ```bash
-   VERSION=0.1.1
+   VERSION=0.2.1
    git add pyproject.toml uv.lock
    git commit -m "Prepare release v${VERSION}"
    git push origin main
@@ -114,4 +124,4 @@ The tag-triggered workflow reruns tests on Python 3.11, 3.12, and 3.13 before pu
 
 ## State ownership
 
-Claim registries and event journals live in each target repository's Git common directory. Skill files remain in their installed roots. The MCP process does not hold authoritative claim or skill-load state.
+Claim registries and event journals live in each target repository's Git common directory. Skill files remain authoritative in their installed roots. Process-local catalog and registry snapshots are read versions identified by digests, not independent state stores; publishing or restarting replaces them from disk.
