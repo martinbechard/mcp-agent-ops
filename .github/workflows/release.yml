@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: uv sync --locked
+      - run: uv run pytest
+      - run: uv run ruff check .
+      - run: uv run mypy src
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+      - name: Verify tag matches package version
+        shell: bash
+        run: |
+          package_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml)"
+          test "v${package_version}" = "${GITHUB_REF_NAME}"
+      - name: Build runtime release bundle
+        run: |
+          mkdir -p dist
+          uv export --locked --no-dev --no-emit-project --output-file dist/runtime-requirements.txt
+          uv build --wheel --out-dir dist
+          cd dist
+          sha256sum mcp_agent_ops-*.whl runtime-requirements.txt > SHA256SUMS
+      - name: Publish GitHub Release
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/mcp_agent_ops-*.whl \
+            dist/runtime-requirements.txt \
+            dist/SHA256SUMS \
+            --verify-tag \
+            --generate-notes \
+            --title "mcp-agent-ops ${GITHUB_REF_NAME}"
