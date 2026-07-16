@@ -52,6 +52,12 @@ rm -rf "$release_dir"
 
 Running the same procedure after a newer release is published replaces the installed tool version. `uv tool list` reports the installed version and commands.
 
+Verify the installed server package without starting stdio:
+
+```bash
+mcp-agent-ops --version
+```
+
 ## Development
 
 Python 3.11 or newer and `uv` are required for development.

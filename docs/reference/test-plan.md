@@ -20,6 +20,7 @@
 
 ## Contract tests
 
+- Non-starting command-line package version identity.
 - Published MCP tool names and path-free input/output schemas, including batch loading and explicit refresh.
 - In-memory calls for each capability group and immutable catalog reuse across repeated calls.
 - Rejection of repository, worktree, verification, validation, and detection paths outside configured roots.
