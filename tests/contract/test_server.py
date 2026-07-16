@@ -702,6 +702,59 @@ async def test_server_audit_records_bounded_domain_outcomes(tmp_path: Path) -> N
     }
 
 
+async def test_shared_audit_records_bounded_skill_load_outcomes(tmp_path: Path) -> None:
+    skills = tmp_path / "skills"
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    _write_skill(skills)
+    audit_log = evidence / "mcp-audit.jsonl"
+    server = create_server(
+        [skills],
+        audit_log=audit_log,
+        audit_roots=[evidence],
+        audit_shared=True,
+        audit_session_id="d" * 32,
+    )
+
+    async with Client(server) as client:
+        await client.call_tool("skill_load", {"names": ["example"]})
+        await client.call_tool("skill_load", {"names": ["missing"]})
+        await client.call_tool(
+            "skill_resource_load",
+            {
+                "requests": [{
+                    "skill_name": "example",
+                    "resource_path": "references/guide.md",
+                }]
+            },
+        )
+        await client.call_tool(
+            "skill_resource_load",
+            {
+                "requests": [{
+                    "skill_name": "example",
+                    "resource_path": "missing.md",
+                }]
+            },
+        )
+
+    audit = audit_log.read_text(encoding="utf-8")
+    completed = [
+        (record["tool"], record.get("outcome"))
+        for record in (json.loads(line) for line in audit.splitlines())
+        if record["status"] == "completed"
+    ]
+    assert completed == [
+        ("skill_load", "LOADED"),
+        ("skill_load", "REJECTED"),
+        ("skill_resource_load", "LOADED"),
+        ("skill_resource_load", "REJECTED"),
+    ]
+    assert "supporting guide" not in audit
+    assert "references/guide.md" not in audit
+    assert '"missing"' not in audit
+
+
 async def test_shared_audit_distinguishes_empty_deterministic_operations(
     tmp_path: Path,
 ) -> None:

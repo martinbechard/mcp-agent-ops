@@ -241,6 +241,9 @@ def _safe_outcome(tool: str, result: ToolResult) -> str | None:
         if isinstance(skills, list):
             return "CATALOG" if skills else "EMPTY"
         return None
+    if tool in {"skill_load", "skill_resource_load"}:
+        ok = structured.get("ok")
+        return "LOADED" if ok is True else "REJECTED" if ok is False else None
     if tool == "detect_technology_skills":
         detection = structured.get("result")
         if not isinstance(detection, Mapping):
