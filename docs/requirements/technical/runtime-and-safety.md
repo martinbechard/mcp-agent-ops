@@ -13,5 +13,7 @@
 - Permit claim operations against unrelated repositories to run concurrently within one server process.
 - Keep catalog snapshots immutable for readers and atomically replace them only through explicit refresh.
 - Bound batch counts and encoded response sizes before returning skill or resource content.
+- Permit an evaluation audit log only beneath explicitly configured audit roots, create it exclusively, reject symlink substitution, and never retain tool arguments or result content.
+- When configured, verify the required installed-runtime digest before importing the MCP transport or starting stdio.
 - Test protocol behavior both in memory and through a real stdio subprocess.
 - Test claim contention with independent processes against one temporary Git repository.

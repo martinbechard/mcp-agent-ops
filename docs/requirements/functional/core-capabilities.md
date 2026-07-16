@@ -36,6 +36,8 @@
 ## Protocol
 
 - The service starts over stdio without writing non-protocol output to standard output.
+- A non-starting command reports package version and a location-independent digest of installed runtime resources.
 - Tool results are structured and schema-described.
 - Skill content is available as MCP resources and through tool fallbacks for tool-only hosts.
 - Claim results are produced through a structured in-process dispatcher while preserving the direct CLI contract.
+- An explicitly configured evaluation audit records digest-only tool lifecycle evidence without retaining arguments or results.

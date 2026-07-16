@@ -68,3 +68,7 @@ Skill roots come from `MCP_AGENT_OPS_SKILL_ROOTS`. Validation paths and every di
 | `skill-resource://{name}/{resource_path}` | Selected supporting text or binary resource. |
 
 Tool fallbacks remain available because some MCP hosts do not expose resources directly to their agents.
+
+## Evaluation Audit
+
+`MCP_AGENT_OPS_AUDIT_LOG` enables one evaluator-owned JSON Lines tool lifecycle trace when `MCP_AGENT_OPS_AUDIT_ROOTS` also contains its destination. Each started and terminal record contains the tool name, call identity, sequence, status, and SHA-256 digests only. The audit is not an MCP tool, is invisible to the model, and never stores arguments or returned content.

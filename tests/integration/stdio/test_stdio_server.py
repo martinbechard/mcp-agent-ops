@@ -21,6 +21,8 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
     )
     environment = os.environ.copy()
     environment["MCP_AGENT_OPS_SKILL_ROOTS"] = str(tmp_path / "skills")
+    environment["MCP_AGENT_OPS_AUDIT_LOG"] = str(tmp_path / "mcp-audit.jsonl")
+    environment["MCP_AGENT_OPS_AUDIT_ROOTS"] = str(tmp_path)
     transport = StdioTransport(
         command=sys.executable,
         args=["-m", "mcp_agent_ops"],
@@ -47,3 +49,8 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
         await client.call_tool("skill_refresh", {})
         refreshed = await client.call_tool("skill_load", {"names": ["example"]})
         assert refreshed.structured_content["skills"][0]["content"].endswith("# Changed\n")
+
+    audit = (tmp_path / "mcp-audit.jsonl").read_text(encoding="utf-8")
+    assert '"tool":"skill_load"' in audit
+    assert '"status":"completed"' in audit
+    assert "Stdio example" not in audit

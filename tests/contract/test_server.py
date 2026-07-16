@@ -4,6 +4,7 @@
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
+import asyncio
 import json
 import subprocess
 from pathlib import Path
@@ -13,7 +14,11 @@ import pytest
 import yaml
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
+from fastmcp.server.middleware import MiddlewareContext
+from fastmcp.tools.base import ToolResult
+from mcp.types import CallToolRequestParams
 
+from mcp_agent_ops.adapters.mcp.audit import ToolAuditLog, ToolAuditMiddleware
 from mcp_agent_ops.adapters.mcp.server import create_server
 from mcp_agent_ops.skill_catalog.catalog import SkillCatalog
 
@@ -356,3 +361,197 @@ async def test_server_detection_registry_failures_do_not_expose_configured_paths
 
     assert "Configured technology detection registry is invalid" in str(captured.value)
     assert str(tmp_path) not in str(captured.value)
+
+
+async def test_server_writes_digest_only_tool_audit_records(tmp_path: Path) -> None:
+    skills = tmp_path / "skills"
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    _write_skill(skills)
+    audit_log = evidence / "mcp-audit.jsonl"
+    server = create_server(
+        [skills],
+        audit_log=audit_log,
+        audit_roots=[evidence],
+    )
+
+    async with Client(server) as client:
+        await client.call_tool("skill_read", {"name": "example"})
+
+    records = [json.loads(line) for line in audit_log.read_text(encoding="utf-8").splitlines()]
+    assert [record["status"] for record in records] == ["started", "completed"]
+    assert {record["tool"] for record in records} == {"skill_read"}
+    assert records[0]["callId"] == records[1]["callId"]
+    assert set(records[0]) == {
+        "schema",
+        "version",
+        "sequence",
+        "callId",
+        "tool",
+        "status",
+        "argumentsDigest",
+    }
+    assert set(records[1]) == {
+        "schema",
+        "version",
+        "sequence",
+        "callId",
+        "tool",
+        "status",
+        "resultDigest",
+    }
+    assert len(records[0]["argumentsDigest"]) == 64
+    assert len(records[1]["resultDigest"]) == 64
+    serialized = json.dumps(records, sort_keys=True)
+    assert "example" not in serialized
+    assert "supporting guide" not in serialized
+    assert str(tmp_path) not in serialized
+
+
+def test_server_rejects_audit_log_outside_configured_audit_roots(tmp_path: Path) -> None:
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+
+    with pytest.raises(ValueError, match="outside configured audit roots"):
+        create_server(
+            [],
+            audit_log=tmp_path / "outside.jsonl",
+            audit_roots=[evidence],
+        )
+
+
+@pytest.mark.parametrize("existing_kind", ["file", "symlink"])
+def test_server_rejects_preexisting_audit_leaf(
+    tmp_path: Path,
+    existing_kind: str,
+) -> None:
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    audit_log = evidence / "mcp-audit.jsonl"
+    target = evidence / "target.jsonl"
+    if existing_kind == "file":
+        audit_log.write_text("existing\n", encoding="utf-8")
+    else:
+        audit_log.symlink_to(target.name)
+
+    with pytest.raises(ValueError, match="new regular file"):
+        create_server([], audit_log=audit_log, audit_roots=[evidence])
+
+    assert not target.exists()
+
+
+async def test_server_redacts_unknown_tool_names_from_audit(tmp_path: Path) -> None:
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    audit_log = evidence / "mcp-audit.jsonl"
+    server = create_server([], audit_log=audit_log, audit_roots=[evidence])
+
+    async with Client(server) as client:
+        with pytest.raises(ToolError):
+            await client.call_tool("PROMPT_SECRET_/private/example", {})
+
+    audit = audit_log.read_text(encoding="utf-8")
+    records = [json.loads(line) for line in audit.splitlines()]
+    assert {record["tool"] for record in records} == {"unknown_tool"}
+    assert "PROMPT_SECRET" not in audit
+    assert "/private/example" not in audit
+
+
+async def test_server_audit_sequences_concurrent_calls(tmp_path: Path) -> None:
+    skills = tmp_path / "skills"
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    _write_skill(skills)
+    audit_log = evidence / "mcp-audit.jsonl"
+    server = create_server([skills], audit_log=audit_log, audit_roots=[evidence])
+
+    async with Client(server) as client:
+        await asyncio.gather(
+            *(client.call_tool("skill_list", {}) for _ in range(8))
+        )
+
+    records = [json.loads(line) for line in audit_log.read_text(encoding="utf-8").splitlines()]
+    assert [record["sequence"] for record in records] == list(range(1, 17))
+    starts = {
+        record["callId"]: record["tool"]
+        for record in records
+        if record["status"] == "started"
+    }
+    terminals = {
+        record["callId"]: record["tool"]
+        for record in records
+        if record["status"] in {"completed", "failed"}
+    }
+    assert starts == terminals
+    assert len(starts) == 8
+
+
+def test_audit_log_keeps_writing_to_exclusively_opened_file(tmp_path: Path) -> None:
+    audit_path = tmp_path / "audit.jsonl"
+    moved_path = tmp_path / "moved.jsonl"
+    audit = ToolAuditLog(audit_path)
+    call_id = audit.start("skill_list", {})
+    audit_path.rename(moved_path)
+    audit_path.write_text("replacement\n", encoding="utf-8")
+
+    audit.finish(call_id, "skill_list", "completed", {"ok": True})
+
+    assert len(moved_path.read_text(encoding="utf-8").splitlines()) == 2
+    assert audit_path.read_text(encoding="utf-8") == "replacement\n"
+
+
+async def test_audit_middleware_preserves_dispatch_failure_and_success() -> None:
+    context = MiddlewareContext(
+        message=CallToolRequestParams(name="skill_list", arguments={})
+    )
+    failed_audit = mock.Mock(spec=ToolAuditLog)
+    failed_audit.start.return_value = "1"
+    failed_middleware = ToolAuditMiddleware(failed_audit, frozenset({"skill_list"}))
+
+    async def fail_dispatch(
+        _context: MiddlewareContext[CallToolRequestParams],
+    ) -> ToolResult:
+        raise RuntimeError("dispatch failed")
+
+    with pytest.raises(RuntimeError, match="dispatch failed"):
+        await failed_middleware.on_call_tool(context, fail_dispatch)
+    failed_audit.finish.assert_called_once_with(
+        "1", "skill_list", "failed", {"errorType": "RuntimeError"}
+    )
+
+    completed = ToolResult(structured_content={"ok": True})
+    completed_audit = mock.Mock(spec=ToolAuditLog)
+    completed_audit.start.return_value = "2"
+    completed_audit.finish.side_effect = OSError("audit unavailable")
+    completed_middleware = ToolAuditMiddleware(
+        completed_audit,
+        frozenset({"skill_list"}),
+    )
+
+    async def complete_dispatch(
+        _context: MiddlewareContext[CallToolRequestParams],
+    ) -> ToolResult:
+        return completed
+
+    assert await completed_middleware.on_call_tool(context, complete_dispatch) is completed
+
+
+async def test_audit_middleware_fails_closed_before_dispatch() -> None:
+    context = MiddlewareContext(
+        message=CallToolRequestParams(name="skill_list", arguments={})
+    )
+    audit = mock.Mock(spec=ToolAuditLog)
+    audit.start.side_effect = OSError("audit unavailable")
+    middleware = ToolAuditMiddleware(audit, frozenset({"skill_list"}))
+    dispatched = False
+
+    async def dispatch(
+        _context: MiddlewareContext[CallToolRequestParams],
+    ) -> ToolResult:
+        nonlocal dispatched
+        dispatched = True
+        return ToolResult()
+
+    with pytest.raises(OSError, match="audit unavailable"):
+        await middleware.on_call_tool(context, dispatch)
+    assert dispatched is False

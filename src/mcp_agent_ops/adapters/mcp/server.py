@@ -12,6 +12,7 @@ from pathlib import Path
 import yaml
 from fastmcp import FastMCP
 
+from mcp_agent_ops.adapters.mcp.audit import ToolAuditLog, ToolAuditMiddleware
 from mcp_agent_ops.claims.service import ClaimCommandResult, run_claim_command
 from mcp_agent_ops.skill_catalog.catalog import SkillCatalog
 from mcp_agent_ops.skill_catalog.models import (
@@ -30,6 +31,26 @@ from mcp_agent_ops.verification.markdown_links import verify_markdown_links as v
 from mcp_agent_ops.verification.models import VerificationReport
 from mcp_agent_ops.verification.paths import resolve_within_roots
 from mcp_agent_ops.verification.yaml_files import verify_yaml as verify_yaml_domain
+
+AUDITED_TOOL_NAMES = frozenset({
+    "claim_acquire",
+    "claim_extend",
+    "claim_heartbeat",
+    "claim_maintain_journal",
+    "claim_release",
+    "claim_report",
+    "claim_status",
+    "detect_technology_skills",
+    "skill_list",
+    "skill_load",
+    "skill_read",
+    "skill_read_resource",
+    "skill_refresh",
+    "skill_resource_load",
+    "skill_validate",
+    "verify_markdown_links",
+    "verify_yaml",
+})
 
 
 def _append_values(arguments: list[str], option: str, values: Sequence[str] | None) -> None:
@@ -80,10 +101,33 @@ def configured_workspace_roots() -> list[Path]:
     return [Path(value).expanduser() for value in raw.split(os.pathsep) if value]
 
 
+def configured_audit_log() -> Path | None:
+    """Return the evaluator-controlled digest-only audit log path, if configured."""
+    value = os.environ.get("MCP_AGENT_OPS_AUDIT_LOG")
+    return Path(value).expanduser() if value else None
+
+
+def configured_audit_roots() -> list[Path]:
+    """Read administrator-configured roots permitted to contain an MCP audit log."""
+    raw = os.environ.get("MCP_AGENT_OPS_AUDIT_ROOTS", "")
+    return [Path(value).expanduser() for value in raw.split(os.pathsep) if value]
+
+
+def _new_audit_path_within_roots(path: Path, roots: Sequence[Path]) -> Path:
+    """Keep the configured leaf unresolved while confining its existing parent."""
+    expanded = path.expanduser()
+    if not expanded.is_absolute() or not expanded.name:
+        raise ValueError("Configured MCP audit log must be an absolute file path.")
+    parent = resolve_within_roots(roots, str(expanded.parent), "audit")
+    return parent / expanded.name
+
+
 def create_server(
     skill_roots: Sequence[Path] | None = None,
     detection_registry: Path | None = None,
     workspace_roots: Sequence[Path] | None = None,
+    audit_log: Path | None = None,
+    audit_roots: Sequence[Path] | None = None,
 ) -> FastMCP:
     """Create the MCP agent-operations server with immutable read snapshots.
 
@@ -94,6 +138,8 @@ def create_server(
             instead of `MCP_AGENT_OPS_DETECTION_REGISTRY`.
         workspace_roots: Optional allowed roots for repositories, projects, verification
             targets, and worktree destinations supplied through model-facing calls.
+        audit_log: Optional evaluator-owned JSON Lines path for digest-only tool-call evidence.
+        audit_roots: Optional allowed roots for the audit log, replacing environment configuration.
 
     Returns:
         A FastMCP server ready for in-memory testing or stdio execution.
@@ -109,7 +155,18 @@ def create_server(
         if workspace_roots is not None
         else configured_workspace_roots()
     )
+    configured_log = audit_log if audit_log is not None else configured_audit_log()
+    allowed_audit_roots = (
+        list(audit_roots) if audit_roots is not None else configured_audit_roots()
+    )
     mcp = FastMCP("MCP Agent Operations")
+    tool_audit_log: ToolAuditLog | None = None
+    if configured_log is not None:
+        resolved_audit_log = _new_audit_path_within_roots(
+            configured_log,
+            allowed_audit_roots,
+        )
+        tool_audit_log = ToolAuditLog(resolved_audit_log)
     catalog_lock = threading.Lock()
     catalog_snapshot: SkillCatalog | None = None
     detection_lock = threading.Lock()
@@ -384,6 +441,11 @@ def create_server(
         import base64
 
         return base64.b64decode(loaded.data_base64)
+
+    if tool_audit_log is not None:
+        mcp.add_middleware(
+            ToolAuditMiddleware(tool_audit_log, AUDITED_TOOL_NAMES)
+        )
 
     return mcp
 

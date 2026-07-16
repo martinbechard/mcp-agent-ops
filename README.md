@@ -56,7 +56,10 @@ Verify the installed server package without starting stdio:
 
 ```bash
 mcp-agent-ops --version
+mcp-agent-ops --identity-json
 ```
+
+The JSON identity includes a location-independent SHA-256 digest over installed runtime resources. Evaluation runners can pin both that runtime digest and the launcher executable digest instead of treating a small console-script wrapper as the server implementation.
 
 ## Development
 
@@ -86,6 +89,10 @@ The server uses stdio by default. Configure all three path boundaries before exp
 Repository, project, verification, worktree, and validation paths supplied through tools must be absolute and resolve beneath their configured boundary. Catalog discovery, skill validation, and technology detection recheck every nested manifest, metadata file, source file, and supporting resource before reading it. The server rejects missing boundary configuration, traversal, and symlink escape rather than granting ambient filesystem access.
 
 The skill catalog is built lazily and reused for the life of the server process. `skill_refresh` atomically publishes a new catalog snapshot after installed skills change. Technology registry configuration is also cached and takes effect after restarting the server. Claim state remains disk-authoritative and coordinates across server processes.
+
+Evaluation runners may configure `MCP_AGENT_OPS_AUDIT_LOG` plus `MCP_AGENT_OPS_AUDIT_ROOTS` to create one exclusive digest-only JSON Lines tool-call trace. The trace records tool name, lifecycle status, sequence, and argument or result digests. It never stores arguments, returned content, prompts, or configured paths. Do not configure this trace for ordinary sessions that do not need evaluator-owned call evidence.
+
+An evaluator can also set `MCP_AGENT_OPS_REQUIRED_RUNTIME_DIGEST` to the pinned value returned by `--identity-json`. The server checks it before importing FastMCP or starting stdio and fails closed when the installed runtime has drifted.
 
 ## Create a release
 

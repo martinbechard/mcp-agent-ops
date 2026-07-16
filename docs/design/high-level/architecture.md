@@ -40,3 +40,7 @@ The host configures separate skill roots and workspace roots. Model-supplied rep
 ## Transport
 
 The transport is stdio. Process memory is used only for immutable read snapshots; disk remains authoritative and separate server processes continue coordinating claim mutations through repository-global state. An HTTP transport can be added later without changing domain interfaces.
+
+The non-starting identity command reports the package version plus a location-independent digest over installed runtime resources. Evaluators bind that digest together with the launcher digest and server configuration before execution.
+
+An optional evaluation-only middleware writes a separate digest-only tool lifecycle stream beneath an administrator-configured audit root. It records a started event before dispatch and a terminal digest after dispatch. A post-dispatch audit write failure never converts a completed mutation into a retryable tool failure; the evaluator instead rejects the incomplete audit stream.

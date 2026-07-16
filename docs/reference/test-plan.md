@@ -20,11 +20,13 @@
 
 ## Contract tests
 
-- Non-starting command-line package version identity.
+- Stable non-starting command-line package version and installed-runtime identity.
+- Fail-closed startup when an evaluator-pinned installed-runtime digest does not match.
 - Published MCP tool names and path-free input/output schemas, including batch loading and explicit refresh.
 - In-memory calls for each capability group and immutable catalog reuse across repeated calls.
 - Rejection of repository, worktree, verification, validation, and detection paths outside configured roots.
 - Path-free catalog errors plus path-free skill-validation and technology-detection results.
+- Digest-only tool audit lifecycle, exclusive audit-root confinement, content omission, and real stdio evidence.
 - Skill catalog and skill-content MCP resources.
 
 ## Integration tests
