@@ -26,7 +26,7 @@
 - In-memory calls for each capability group and immutable catalog reuse across repeated calls.
 - Rejection of repository, worktree, verification, validation, and detection paths outside configured roots.
 - Path-free catalog errors plus path-free skill-validation and technology-detection results.
-- Digest-only tool audit lifecycle, exclusive audit-root confinement, content omission, and real stdio evidence.
+- Digest-only tool audit lifecycle, exclusive audit-root confinement, safe shared parent and subagent streams, content omission, and real stdio evidence.
 - Skill catalog and skill-content MCP resources.
 
 ## Integration tests

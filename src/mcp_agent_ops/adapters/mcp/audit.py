@@ -9,6 +9,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import secrets
 import stat
 import threading
 from collections.abc import Mapping
@@ -20,6 +22,11 @@ from typing import BinaryIO
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools.base import ToolResult
 from mcp.types import CallToolRequestParams
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - shared evaluation audit is POSIX-only.
+    fcntl = None  # type: ignore[assignment]
 
 
 def _digest(value: object) -> str:
@@ -48,19 +55,42 @@ def _digest(value: object) -> str:
 
 
 class ToolAuditLog:
-    """Own one exclusive JSON Lines audit file for a single MCP server process.
+    """Own one JSON Lines audit stream for one MCP server process.
 
     Records contain only tool identity, lifecycle status, sequence numbers, and content
-    digests. The caller must prevalidate the path against an administrator-owned root.
+    digests. Shared version-two records also contain evaluator session, random process
+    stream, and bounded canonical outcome identifiers. The caller must prevalidate the
+    path against an administrator-owned root.
     """
 
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        shared: bool = False,
+        session_id: str | None = None,
+    ) -> None:
         self.path = path
+        self.shared = shared
+        self.stream_id = secrets.token_hex(16) if shared else None
+        if session_id is not None and not re.fullmatch(r"[0-9a-f]{32}", session_id):
+            raise ValueError("MCP audit session identity must be 32 lowercase hexadecimal characters.")
+        if shared and session_id is None:
+            raise ValueError("Shared MCP audit logging requires a session identity.")
+        if not shared and session_id is not None:
+            raise ValueError("MCP audit session identity is valid only for shared audit logging.")
+        self.session_id = session_id
         self._lock = threading.Lock()
         self._sequence = 0
         if not path.parent.is_dir():
             raise ValueError("Configured MCP audit log parent does not exist.")
-        flags = os.O_APPEND | os.O_CREAT | os.O_EXCL | os.O_WRONLY
+        if shared and fcntl is None:
+            raise ValueError("Shared MCP audit logging requires POSIX file locking.")
+        flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
+        if not shared:
+            flags |= os.O_EXCL
+        elif hasattr(os, "O_NONBLOCK"):
+            flags |= os.O_NONBLOCK
         if hasattr(os, "O_CLOEXEC"):
             flags |= os.O_CLOEXEC
         if hasattr(os, "O_NOFOLLOW"):
@@ -70,8 +100,16 @@ class ToolAuditLog:
         except OSError as error:
             raise ValueError("Configured MCP audit log must be a new regular file.") from error
         try:
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
                 raise ValueError("Configured MCP audit log must be a new regular file.")
+            if shared and (
+                metadata.st_uid != os.geteuid()
+                or stat.S_IMODE(metadata.st_mode) & 0o077
+            ):
+                raise ValueError(
+                    "Shared MCP audit log must be owner-only and owned by this process user."
+                )
             self._stream: BinaryIO = os.fdopen(descriptor, "wb", buffering=0)
         except Exception:
             os.close(descriptor)
@@ -95,34 +133,52 @@ class ToolAuditLog:
         tool: str,
         status: str,
         result: object,
+        outcome: str | None = None,
     ) -> None:
         """Record completion or failure for one previously started tool call."""
         with self._lock:
-            self._append_locked({
+            fields: dict[str, object] = {
                 "callId": call_id,
                 "tool": tool,
                 "status": status,
                 "resultDigest": _digest(result),
-            })
+            }
+            if outcome is not None:
+                if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", outcome):
+                    raise ValueError("MCP audit outcomes must be canonical uppercase identifiers.")
+                fields["outcome"] = outcome
+            self._append_locked(fields)
 
     def _append_locked(self, fields: dict[str, object]) -> None:
         self._sequence += 1
         record = {
             "schema": "mcp-agent-ops-tool-audit",
-            "version": 1,
+            "version": 2 if self.shared else 1,
             "sequence": self._sequence,
             **fields,
         }
+        if self.stream_id is not None:
+            record["streamId"] = self.stream_id
+        if self.session_id is not None:
+            record["sessionId"] = self.session_id
         encoded = (
             json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
         ).encode("utf-8")
-        remaining = memoryview(encoded)
-        while remaining:
-            written = self._stream.write(remaining)
-            if written is None or written <= 0:
-                raise OSError("Unable to write MCP audit evidence.")
-            remaining = remaining[written:]
-        os.fsync(self._stream.fileno())
+        if self.shared:
+            assert fcntl is not None
+            fcntl.flock(self._stream.fileno(), fcntl.LOCK_EX)
+        try:
+            remaining = memoryview(encoded)
+            while remaining:
+                written = self._stream.write(remaining)
+                if written is None or written <= 0:
+                    raise OSError("Unable to write MCP audit evidence.")
+                remaining = remaining[written:]
+            os.fsync(self._stream.fileno())
+        finally:
+            if self.shared:
+                assert fcntl is not None
+                fcntl.flock(self._stream.fileno(), fcntl.LOCK_UN)
 
 
 class ToolAuditMiddleware(Middleware):
@@ -150,9 +206,57 @@ class ToolAuditMiddleware(Middleware):
                     tool,
                     "failed",
                     {"errorType": type(error).__name__},
+                    "ERROR" if self.audit_log.shared else None,
                 )
             raise
         # A post-call audit failure must not turn a completed mutation into a retryable tool failure.
         with suppress(Exception):
-            self.audit_log.finish(call_id, tool, "completed", result)
+            self.audit_log.finish(
+                call_id,
+                tool,
+                "completed",
+                result,
+                _safe_outcome(tool, result) if self.audit_log.shared else None,
+            )
         return result
+
+
+def _safe_outcome(tool: str, result: ToolResult) -> str | None:
+    """Extract one bounded non-content outcome for deterministic evaluation checks."""
+    structured = result.structured_content
+    if not isinstance(structured, Mapping):
+        return None
+    if tool.startswith("claim_"):
+        claim_result = structured.get("result")
+        outcome = claim_result.get("outcome") if isinstance(claim_result, Mapping) else None
+        return str(outcome) if isinstance(outcome, str) else None
+    if tool in {"verify_yaml", "verify_markdown_links"}:
+        ok = structured.get("ok")
+        checked_files = structured.get("checked_files")
+        if ok is True and isinstance(checked_files, list) and not checked_files:
+            return "EMPTY"
+        return "OK" if ok is True else "FINDINGS" if ok is False else None
+    if tool == "skill_list":
+        skills = structured.get("skills")
+        if isinstance(skills, list):
+            return "CATALOG" if skills else "EMPTY"
+        return None
+    if tool == "detect_technology_skills":
+        detection = structured.get("result")
+        if not isinstance(detection, Mapping):
+            return None
+        loadouts = detection.get("loadouts")
+        statuses = {
+            str(item.get("status"))
+            for item in loadouts
+            if isinstance(item, Mapping) and isinstance(item.get("status"), str)
+        } if isinstance(loadouts, list) else set()
+        if not statuses:
+            return "EMPTY"
+        if "BLOCKED" in statuses:
+            return "BLOCKED"
+        if statuses and statuses == {"NO_VARIANT"}:
+            return "NO_VARIANT"
+        if statuses:
+            return "READY"
+    return None

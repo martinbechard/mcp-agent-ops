@@ -6,6 +6,7 @@
 
 import asyncio
 import json
+import os
 import subprocess
 from pathlib import Path
 from unittest import mock
@@ -453,6 +454,7 @@ async def test_server_redacts_unknown_tool_names_from_audit(tmp_path: Path) -> N
     audit = audit_log.read_text(encoding="utf-8")
     records = [json.loads(line) for line in audit.splitlines()]
     assert {record["tool"] for record in records} == {"unknown_tool"}
+    assert all("outcome" not in record for record in records)
     assert "PROMPT_SECRET" not in audit
     assert "/private/example" not in audit
 
@@ -500,12 +502,257 @@ def test_audit_log_keeps_writing_to_exclusively_opened_file(tmp_path: Path) -> N
     assert audit_path.read_text(encoding="utf-8") == "replacement\n"
 
 
+def test_shared_audit_log_separates_process_streams_under_one_file(tmp_path: Path) -> None:
+    audit_path = tmp_path / "shared-audit.jsonl"
+    session_id = "a" * 32
+    first = ToolAuditLog(audit_path, shared=True, session_id=session_id)
+    second = ToolAuditLog(audit_path, shared=True, session_id=session_id)
+
+    first_call = first.start("skill_list", {})
+    second_call = second.start("claim_status", {})
+    first.finish(first_call, "skill_list", "completed", {"ok": True})
+    second.finish(second_call, "claim_status", "completed", {"ok": True})
+
+    records = [
+        json.loads(line)
+        for line in audit_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert {record["version"] for record in records} == {2}
+    assert {record["sessionId"] for record in records} == {session_id}
+    streams = {record["streamId"] for record in records}
+    assert len(streams) == 2
+    for stream in streams:
+        stream_records = [record for record in records if record["streamId"] == stream]
+        assert [record["sequence"] for record in stream_records] == [1, 2]
+        assert [record["status"] for record in stream_records] == [
+            "started",
+            "completed",
+        ]
+
+
+def test_shared_audit_rejects_preexisting_group_readable_file(tmp_path: Path) -> None:
+    audit_path = tmp_path / "shared-audit.jsonl"
+    audit_path.write_text("", encoding="utf-8")
+    audit_path.chmod(0o640)
+
+    with pytest.raises(ValueError, match="owner-only"):
+        ToolAuditLog(audit_path, shared=True, session_id="a" * 32)
+
+
+@pytest.mark.parametrize("existing_kind", ["fifo", "hard-link"])
+def test_shared_audit_rejects_non_regular_or_linked_leaf(
+    tmp_path: Path,
+    existing_kind: str,
+) -> None:
+    audit_path = tmp_path / "shared-audit.jsonl"
+    if existing_kind == "fifo":
+        audit_path.parent.mkdir(parents=True, exist_ok=True)
+        os.mkfifo(audit_path, mode=0o600)
+    else:
+        target = tmp_path / "target.jsonl"
+        target.write_text("", encoding="utf-8")
+        target.chmod(0o600)
+        os.link(target, audit_path)
+
+    with pytest.raises(ValueError, match="regular file"):
+        ToolAuditLog(audit_path, shared=True, session_id="a" * 32)
+
+
+@pytest.mark.parametrize("session_id", [None, "A" * 32, "a" * 31])
+def test_shared_audit_requires_canonical_session_identity(
+    tmp_path: Path,
+    session_id: str | None,
+) -> None:
+    with pytest.raises(ValueError, match="session identity"):
+        ToolAuditLog(
+            tmp_path / f"audit-{session_id or 'missing'}.jsonl",
+            shared=True,
+            session_id=session_id,
+        )
+
+
+def test_audit_session_identity_requires_shared_mode(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="only for shared"):
+        ToolAuditLog(tmp_path / "audit.jsonl", session_id="a" * 32)
+
+
+def test_shared_audit_server_requires_log_path() -> None:
+    with pytest.raises(ValueError, match="requires an audit log path"):
+        create_server([], audit_shared=True, audit_session_id="a" * 32)
+
+
+def test_server_rejects_invalid_shared_audit_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MCP_AGENT_OPS_AUDIT_SHARED", "sometimes")
+    with pytest.raises(ValueError, match="must be true or false"):
+        create_server([])
+
+
+async def test_server_instances_share_one_evaluation_audit(tmp_path: Path) -> None:
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    audit_log = evidence / "mcp-audit.jsonl"
+    first = create_server(
+        [],
+        audit_log=audit_log,
+        audit_roots=[evidence],
+        audit_shared=True,
+        audit_session_id="b" * 32,
+    )
+    second = create_server(
+        [],
+        audit_log=audit_log,
+        audit_roots=[evidence],
+        audit_shared=True,
+        audit_session_id="b" * 32,
+    )
+
+    async with Client(first) as first_client, Client(second) as second_client:
+        await asyncio.gather(
+            first_client.call_tool("skill_list", {}),
+            second_client.call_tool("skill_list", {}),
+        )
+
+    records = [
+        json.loads(line)
+        for line in audit_log.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len({record["streamId"] for record in records}) == 2
+    assert all(record["version"] == 2 for record in records)
+    assert {
+        record.get("outcome")
+        for record in records
+        if record["status"] == "completed"
+    } == {"EMPTY"}
+
+
+async def test_server_audit_records_bounded_domain_outcomes(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    skills = tmp_path / "skills"
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    _initialize_repository(repository)
+    _write_skill(skills)
+    (repository / "valid.yaml").write_text("value: true\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(repository), "add", "valid.yaml"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repository), "commit", "-m", "add yaml"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    audit_log = evidence / "mcp-audit.jsonl"
+    server = create_server(
+        [skills],
+        workspace_roots=[tmp_path],
+        audit_log=audit_log,
+        audit_roots=[evidence],
+        audit_shared=True,
+        audit_session_id="c" * 32,
+    )
+
+    async with Client(server) as client:
+        await client.call_tool("skill_list", {})
+        await client.call_tool(
+            "claim_acquire",
+            {
+                "repository": str(repository),
+                "claim_id": "audit-outcome",
+                "agent": "contract-test",
+                "task": "audit-outcome",
+                "root_task_id": "audit-outcome",
+                "files": ["README.md"],
+            },
+        )
+        await client.call_tool(
+            "verify_yaml",
+            {
+                "repository_root": str(repository),
+                "paths": ["valid.yaml"],
+            },
+        )
+        await client.call_tool(
+            "claim_release",
+            {
+                "repository": str(repository),
+                "claim_id": "audit-outcome",
+                "no_change": True,
+            },
+        )
+
+    outcomes = {
+        record["tool"]: record.get("outcome")
+        for record in (
+            json.loads(line)
+            for line in audit_log.read_text(encoding="utf-8").splitlines()
+        )
+        if record["status"] == "completed"
+    }
+    assert outcomes == {
+        "skill_list": "CATALOG",
+        "claim_acquire": "PRIMARY",
+        "verify_yaml": "OK",
+        "claim_release": "RELEASED",
+    }
+
+
+async def test_shared_audit_distinguishes_empty_deterministic_operations(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    skills = tmp_path / "skills"
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    _initialize_repository(repository)
+    skills.mkdir()
+    registry = tmp_path / "registry.yaml"
+    registry.write_text("schemaVersion: 1\nskills: []\n", encoding="utf-8")
+    audit_log = evidence / "mcp-audit.jsonl"
+    server = create_server(
+        [skills],
+        detection_registry=registry,
+        workspace_roots=[tmp_path],
+        audit_log=audit_log,
+        audit_roots=[evidence],
+        audit_shared=True,
+        audit_session_id="e" * 32,
+    )
+
+    async with Client(server) as client:
+        await client.call_tool("skill_list", {})
+        await client.call_tool(
+            "verify_yaml",
+            {"repository_root": str(repository), "paths": []},
+        )
+        await client.call_tool(
+            "detect_technology_skills",
+            {"project_root": str(repository), "scopes": []},
+        )
+
+    outcomes = [
+        record.get("outcome")
+        for record in (
+            json.loads(line)
+            for line in audit_log.read_text(encoding="utf-8").splitlines()
+        )
+        if record["status"] == "completed"
+    ]
+    assert outcomes == ["EMPTY", "EMPTY", "EMPTY"]
+
+
 async def test_audit_middleware_preserves_dispatch_failure_and_success() -> None:
     context = MiddlewareContext(
         message=CallToolRequestParams(name="skill_list", arguments={})
     )
     failed_audit = mock.Mock(spec=ToolAuditLog)
     failed_audit.start.return_value = "1"
+    failed_audit.shared = False
     failed_middleware = ToolAuditMiddleware(failed_audit, frozenset({"skill_list"}))
 
     async def fail_dispatch(
@@ -516,12 +763,13 @@ async def test_audit_middleware_preserves_dispatch_failure_and_success() -> None
     with pytest.raises(RuntimeError, match="dispatch failed"):
         await failed_middleware.on_call_tool(context, fail_dispatch)
     failed_audit.finish.assert_called_once_with(
-        "1", "skill_list", "failed", {"errorType": "RuntimeError"}
+        "1", "skill_list", "failed", {"errorType": "RuntimeError"}, None
     )
 
     completed = ToolResult(structured_content={"ok": True})
     completed_audit = mock.Mock(spec=ToolAuditLog)
     completed_audit.start.return_value = "2"
+    completed_audit.shared = False
     completed_audit.finish.side_effect = OSError("audit unavailable")
     completed_middleware = ToolAuditMiddleware(
         completed_audit,

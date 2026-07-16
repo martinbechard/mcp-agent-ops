@@ -113,6 +113,19 @@ def configured_audit_roots() -> list[Path]:
     return [Path(value).expanduser() for value in raw.split(os.pathsep) if value]
 
 
+def configured_audit_shared() -> bool:
+    """Return whether several inherited MCP processes may share one audit file."""
+    raw = os.environ.get("MCP_AGENT_OPS_AUDIT_SHARED", "false").strip().lower()
+    if raw not in {"false", "true"}:
+        raise ValueError("MCP_AGENT_OPS_AUDIT_SHARED must be true or false.")
+    return raw == "true"
+
+
+def configured_audit_session_id() -> str | None:
+    """Return the evaluator-generated identity that binds shared audit streams."""
+    return os.environ.get("MCP_AGENT_OPS_AUDIT_SESSION_ID") or None
+
+
 def _new_audit_path_within_roots(path: Path, roots: Sequence[Path]) -> Path:
     """Keep the configured leaf unresolved while confining its existing parent."""
     expanded = path.expanduser()
@@ -128,6 +141,8 @@ def create_server(
     workspace_roots: Sequence[Path] | None = None,
     audit_log: Path | None = None,
     audit_roots: Sequence[Path] | None = None,
+    audit_shared: bool | None = None,
+    audit_session_id: str | None = None,
 ) -> FastMCP:
     """Create the MCP agent-operations server with immutable read snapshots.
 
@@ -140,6 +155,8 @@ def create_server(
             targets, and worktree destinations supplied through model-facing calls.
         audit_log: Optional evaluator-owned JSON Lines path for digest-only tool-call evidence.
         audit_roots: Optional allowed roots for the audit log, replacing environment configuration.
+        audit_shared: Allow inherited MCP server processes to append separate streams to one log.
+        audit_session_id: Optional evaluator-generated identity copied into every audit record.
 
     Returns:
         A FastMCP server ready for in-memory testing or stdio execution.
@@ -159,14 +176,26 @@ def create_server(
     allowed_audit_roots = (
         list(audit_roots) if audit_roots is not None else configured_audit_roots()
     )
+    shared_audit = audit_shared if audit_shared is not None else configured_audit_shared()
+    configured_session = (
+        audit_session_id
+        if audit_session_id is not None
+        else configured_audit_session_id()
+    )
     mcp = FastMCP("MCP Agent Operations")
     tool_audit_log: ToolAuditLog | None = None
+    if shared_audit and configured_log is None:
+        raise ValueError("Shared MCP audit logging requires an audit log path.")
     if configured_log is not None:
         resolved_audit_log = _new_audit_path_within_roots(
             configured_log,
             allowed_audit_roots,
         )
-        tool_audit_log = ToolAuditLog(resolved_audit_log)
+        tool_audit_log = ToolAuditLog(
+            resolved_audit_log,
+            shared=shared_audit,
+            session_id=configured_session,
+        )
     catalog_lock = threading.Lock()
     catalog_snapshot: SkillCatalog | None = None
     detection_lock = threading.Lock()
