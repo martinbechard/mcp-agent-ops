@@ -26,7 +26,9 @@ from mcp_agent_ops.skill_catalog.catalog import SkillCatalog
 
 def _initialize_repository(path: Path) -> None:
     path.mkdir()
+    (path / "backlog").mkdir()
     (path / "README.md").write_text("baseline\n", encoding="utf-8")
+    (path / "backlog" / "item.md").write_text("queued\n", encoding="utf-8")
     for arguments in (
         ("init",),
         ("config", "user.email", "test@example.invalid"),
@@ -78,6 +80,20 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
             "skill_validate",
             "detect_technology_skills",
         } <= names
+        claim_tools = {tool.name: tool for tool in tools if tool.name in {"claim_acquire", "claim_extend"}}
+        for tool in claim_tools.values():
+            properties = tool.inputSchema["properties"]
+            assert properties["project_files"]["type"] == "boolean"
+            assert properties["backlog"]["type"] == "boolean"
+            assert properties["all_files"]["type"] == "boolean"
+            assert ".worktrees/<claim-id>" in properties["project_files"]["description"]
+            assert "backlog omitted by sparse checkout" in properties["project_files"]["description"]
+            assert "PRIMARY_REQUIRED" in properties["backlog"]["description"]
+            assert "requires scope_reason" in properties["all_files"]["description"]
+        assert "PRIMARY_REQUIRED" in (claim_tools["claim_acquire"].description or "")
+        assert ".worktrees/<claim-id>" in (claim_tools["claim_acquire"].description or "")
+        assert "backlog omitted" in (claim_tools["claim_acquire"].description or "")
+        assert "all-files extension" in (claim_tools["claim_extend"].description or "")
 
         status = await client.call_tool("claim_status", {"repository": str(repository)})
         assert status.structured_content["exit_code"] == 0
@@ -104,6 +120,73 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
             {"repository": str(repository), "claim_id": "contract-claim", "no_change": True},
         )
         assert released.structured_content["result"]["outcome"] == "RELEASED"
+
+        project_claim = await client.call_tool(
+            "claim_acquire",
+            {
+                "repository": str(repository),
+                "claim_id": "project-domain",
+                "agent": "contract-test",
+                "task": "project-domain",
+                "root_task_id": "project-domain",
+                "project_files": True,
+                "scope_reason": "project implementation",
+            },
+        )
+        assert project_claim.structured_content["result"]["claim"]["file_domain"] == "project_files"
+        backlog_wait = await client.call_tool(
+            "claim_acquire",
+            {
+                "repository": str(repository),
+                "claim_id": "backlog-domain",
+                "agent": "contract-test",
+                "task": "backlog-domain",
+                "root_task_id": "backlog-domain",
+                "backlog": True,
+            },
+        )
+        assert backlog_wait.structured_content["exit_code"] == 3
+        assert backlog_wait.structured_content["result"]["outcome"] == "PRIMARY_REQUIRED"
+        await client.call_tool(
+            "claim_release",
+            {"repository": str(repository), "claim_id": "project-domain", "no_change": True},
+        )
+        invalid_domains = await client.call_tool(
+            "claim_acquire",
+            {
+                "repository": str(repository),
+                "claim_id": "invalid-domains",
+                "agent": "contract-test",
+                "task": "invalid-domains",
+                "root_task_id": "invalid-domains",
+                "project_files": True,
+                "backlog": True,
+                "scope_reason": "invalid mixed domains",
+            },
+        )
+        assert invalid_domains.structured_content["exit_code"] == 1
+        assert invalid_domains.structured_content["result"]["outcome"] == "INVALID_SCOPE"
+        assert (
+            invalid_domains.structured_content["result"]["rejection"]["reason"]
+            == "multiple_broad_file_domains"
+        )
+        all_files = await client.call_tool(
+            "claim_acquire",
+            {
+                "repository": str(repository),
+                "claim_id": "all-domains",
+                "agent": "contract-test",
+                "task": "all-domains",
+                "root_task_id": "all-domains",
+                "all_files": True,
+                "scope_reason": "repository migration",
+            },
+        )
+        assert all_files.structured_content["result"]["claim"]["file_domain"] == "all_files"
+        await client.call_tool(
+            "claim_release",
+            {"repository": str(repository), "claim_id": "all-domains", "no_change": True},
+        )
 
         (repository / "invalid.yaml").write_text("same: one\nsame: two\n", encoding="utf-8")
         verified = await client.call_tool(

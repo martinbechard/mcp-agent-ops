@@ -9,6 +9,9 @@
 - Recheck every nested skill manifest, adapter metadata file, technology source, owner manifest, owner-evidence file, and resource at its read boundary.
 - Reject nested paths that escape their configured roots through symlinks and omit configured host paths from model-facing diagnostics.
 - Preserve atomic claim registry writes and operating-system file locking.
+- Keep broad claim-domain selection explicit and mutually exclusive; never infer all-files from a repository root argument.
+- Derive isolated checkout locations beneath the primary worktree, require the operational root to be ignored, and configure sparse checkout before populating files.
+- Persist the selected file domain plus out-of-domain baseline evidence so release cannot absorb or silently overlook another domain's changes.
 - Keep authoritative claim state on disk so separate stdio server processes coordinate correctly.
 - Permit claim operations against unrelated repositories to run concurrently within one server process.
 - Keep catalog snapshots immutable for readers and atomically replace them only through explicit refresh.

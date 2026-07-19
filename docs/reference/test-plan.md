@@ -12,7 +12,10 @@
 ## Claim compatibility tests
 
 - Primary, isolated, wait, recovery, extension, heartbeat, and release outcomes.
-- Exact-file, tree, all-files, and exclusive-resource overlap semantics.
+- Exact-file, tree, project-files, backlog, all-files, and exclusive-resource overlap semantics.
+- Broad-domain mutual exclusion, explicit backlog compatibility normalization, and atomic mixed-domain rejection.
+- Primary-only backlog and all-files routing plus canonical project isolation without a backlog checkout.
+- Domain-aware recovery and release, including unchanged out-of-domain dirtiness and changed or committed out-of-domain rejection.
 - Stable process exit codes and structured JSON output.
 - Journal warning behavior, two-day hot retention, lossless archival, and contention reporting.
 - Structured in-process dispatch with byte-compatible CLI output.
@@ -22,7 +25,7 @@
 
 - Stable non-starting command-line package version and installed-runtime identity.
 - Fail-closed startup when an evaluator-pinned installed-runtime digest does not match.
-- Published MCP tool names and path-free input/output schemas, including batch loading and explicit refresh.
+- Published MCP tool names and path-free input/output schemas, including all three broad claim domains, batch loading, and explicit refresh.
 - In-memory calls for each capability group and immutable catalog reuse across repeated calls.
 - Rejection of repository, worktree, verification, validation, and detection paths outside configured roots.
 - Path-free catalog errors plus path-free skill-validation and technology-detection results.
@@ -33,7 +36,7 @@
 
 - Simultaneous claim processes cannot both acquire primary ownership.
 - Overlapping concurrent claims produce one safe owner and one wait outcome.
-- A real stdio subprocess initializes, lists tools and resources, preserves a catalog snapshot until explicit refresh, and shuts down cleanly.
+- A real stdio subprocess initializes, advertises broad claim-domain schemas, lists tools and resources, preserves a catalog snapshot until explicit refresh, and shuts down cleanly.
 
 ## Release gates
 

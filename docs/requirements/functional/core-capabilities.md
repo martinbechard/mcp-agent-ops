@@ -6,6 +6,10 @@
 - MCP and CLI claim operations preserve the stable outcomes and exit-code semantics of the existing `agent-claim` command.
 - Claims from linked worktrees coordinate through one registry in the Git common directory.
 - Claim mutations append diagnostic events without making journal availability part of ownership safety.
+- Claims distinguish project-files, backlog, and all-files ownership. Project-files excludes backlog; backlog and all-files are primary-worktree-only.
+- Explicit paths derive one file domain. Mixed project/backlog paths and cross-domain extension fail atomically with structured guidance.
+- Eligible isolated project claims use the canonical ignored `.worktrees/<claim-id>` checkout and omit backlog through worktree-specific sparse checkout.
+- Recovery and release evaluate owned-domain status while preserving unchanged out-of-domain dirtiness; later out-of-domain status or commit changes reject release with exact path diagnostics.
 
 ## Verification
 

@@ -20,7 +20,7 @@ def test_server_command_reports_package_version_without_starting_stdio() -> None
     )
 
     assert completed.returncode == 0
-    assert completed.stdout.strip() == "mcp-agent-ops 0.2.3"
+    assert completed.stdout.strip() == "mcp-agent-ops 0.3.0"
     assert completed.stderr == ""
 
 
@@ -43,7 +43,7 @@ def test_server_command_reports_stable_runtime_identity_without_starting_stdio()
     assert identities[0]["schema"] == "mcp-agent-ops-runtime-identity"
     assert identities[0]["schemaVersion"] == 1
     assert identities[0]["package"] == "mcp-agent-ops"
-    assert identities[0]["packageVersion"] == "0.2.3"
+    assert identities[0]["packageVersion"] == "0.3.0"
     assert len(identities[0]["runtimeDigest"]) == 64
     assert identities[0]["fileCount"] >= 1
 

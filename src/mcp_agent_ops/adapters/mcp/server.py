@@ -8,9 +8,11 @@ import os
 import threading
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Annotated
 
 import yaml
 from fastmcp import FastMCP
+from pydantic import Field
 
 from mcp_agent_ops.adapters.mcp.audit import ToolAuditLog, ToolAuditMiddleware
 from mcp_agent_ops.claims.service import ClaimCommandResult, run_claim_command
@@ -52,6 +54,43 @@ AUDITED_TOOL_NAMES = frozenset({
     "verify_yaml",
 })
 
+_ProjectFilesScope = Annotated[
+    bool,
+    Field(
+        description=(
+            "Select project files excluding backlog. Mutually exclusive with backlog and all_files; "
+            "requires scope_reason. Eligible isolation is placed at the canonical primary-worktree "
+            ".worktrees/<claim-id> path with backlog omitted by sparse checkout."
+        )
+    ),
+]
+_BacklogScope = Annotated[
+    bool,
+    Field(
+        description=(
+            "Select the complete primary-worktree-only backlog. Mutually exclusive with project_files "
+            "and all_files; returns PRIMARY_REQUIRED when primary ownership is unavailable."
+        )
+    ),
+]
+_AllFilesScope = Annotated[
+    bool,
+    Field(
+        description=(
+            "Select the primary-worktree-only union of project files and backlog. Mutually exclusive "
+            "with project_files and backlog; requires scope_reason."
+        )
+    ),
+]
+_ScopeReason = Annotated[
+    str | None,
+    Field(
+        description=(
+            "Bounded coordination-only reason required for tree, project_files, and all_files ownership."
+        )
+    ),
+]
+
 
 def _append_values(arguments: list[str], option: str, values: Sequence[str] | None) -> None:
     for value in values or []:
@@ -63,6 +102,8 @@ def _append_scope(
     files: Sequence[str] | None,
     trees: Sequence[str] | None,
     resources: Sequence[str] | None,
+    project_files: bool,
+    backlog: bool,
     all_files: bool,
     scope_reason: str | None,
     compat_file_directories: bool,
@@ -70,6 +111,10 @@ def _append_scope(
     _append_values(arguments, "--file", files)
     _append_values(arguments, "--tree", trees)
     _append_values(arguments, "--resource", resources)
+    if project_files:
+        arguments.append("--project-files")
+    if backlog:
+        arguments.append("--backlog")
     if all_files:
         arguments.append("--all-files")
     if scope_reason:
@@ -258,8 +303,10 @@ def create_server(
         files: list[str] | None = None,
         trees: list[str] | None = None,
         resources: list[str] | None = None,
-        all_files: bool = False,
-        scope_reason: str | None = None,
+        project_files: _ProjectFilesScope = False,
+        backlog: _BacklogScope = False,
+        all_files: _AllFilesScope = False,
+        scope_reason: _ScopeReason = None,
         parent_claim_id: str | None = None,
         branch: str | None = None,
         worktree_path: str | None = None,
@@ -267,10 +314,15 @@ def create_server(
         allow_recovery: bool = False,
         compat_file_directories: bool = False,
     ) -> ClaimCommandResult:
-        """Atomically acquire narrow file, tree, or resource ownership.
+        """Atomically acquire one file domain plus optional exclusive resources.
 
-        Returns PRIMARY, ISOLATE, WAIT, ISOLATE_REQUIRED, RECOVERY_REQUIRED, RECOVER,
-        or a structured rejection with the copied claim engine's stable exit code.
+        Project-files excludes backlog and supports isolation only beneath the primary
+        worktree's canonical .worktrees/<claim-id> root, with backlog omitted through
+        worktree-specific sparse checkout. Backlog and all-files are primary-worktree-only.
+        The three broad selectors are mutually exclusive; project-files and all-files
+        require scope_reason. Returns PRIMARY, ISOLATE, WAIT, PRIMARY_REQUIRED,
+        ISOLATE_REQUIRED, RECOVERY_REQUIRED, RECOVER, or a structured rejection with the
+        copied claim engine's stable exit code.
         """
         arguments = [
             "--repo",
@@ -295,7 +347,17 @@ def create_server(
             arguments.extend(("--worktree-path", str(workspace_path(worktree_path))))
         if allow_recovery:
             arguments.append("--allow-recovery")
-        _append_scope(arguments, files, trees, resources, all_files, scope_reason, compat_file_directories)
+        _append_scope(
+            arguments,
+            files,
+            trees,
+            resources,
+            project_files,
+            backlog,
+            all_files,
+            scope_reason,
+            compat_file_directories,
+        )
         return run_claim_command(arguments)
 
     @mcp.tool
@@ -305,11 +367,18 @@ def create_server(
         files: list[str] | None = None,
         trees: list[str] | None = None,
         resources: list[str] | None = None,
-        all_files: bool = False,
-        scope_reason: str | None = None,
+        project_files: _ProjectFilesScope = False,
+        backlog: _BacklogScope = False,
+        all_files: _AllFilesScope = False,
+        scope_reason: _ScopeReason = None,
         compat_file_directories: bool = False,
     ) -> ClaimCommandResult:
-        """Atomically add net-new scope to one active claim without weakening existing ownership."""
+        """Atomically add same-domain scope without weakening existing ownership.
+
+        Backlog-domain or all-files extension from an isolated claim returns
+        PRIMARY_REQUIRED. Mixed project/backlog extension returns structured INVALID_SCOPE;
+        project-files and all-files require scope_reason.
+        """
         arguments = [
             "--repo",
             str(workspace_path(repository)),
@@ -317,7 +386,17 @@ def create_server(
             "--claim-id",
             claim_id,
         ]
-        _append_scope(arguments, files, trees, resources, all_files, scope_reason, compat_file_directories)
+        _append_scope(
+            arguments,
+            files,
+            trees,
+            resources,
+            project_files,
+            backlog,
+            all_files,
+            scope_reason,
+            compat_file_directories,
+        )
         return run_claim_command(arguments)
 
     @mcp.tool

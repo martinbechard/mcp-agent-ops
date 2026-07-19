@@ -10,7 +10,7 @@ The service owns five capability groups:
 - Agent Skill validation; and
 - evidence-based technology-skill detection.
 
-The domain packages are independent of FastMCP. The installed `mcp-agent-ops` command starts the FastMCP stdio server, while `mcp-agent-ops-claims` preserves a direct CLI surface for claim coordination and recovery.
+The domain packages are independent of FastMCP. The installed `mcp-agent-ops` command starts the FastMCP stdio server, while `mcp-agent-ops-claims` preserves a direct CLI surface for claim coordination and recovery. Claim callers can select project-files, primary-only backlog, or explicit all-files ownership; project isolation uses a canonical sparse worktree that omits backlog.
 
 The claim engine, technology detector, and Agent Skill validator began as copies of the accepted `dev-methodology` implementations. See `docs/reference/copied-scripts.md` for exact provenance, intentional adapter changes, and compatibility coverage.
 
@@ -112,7 +112,7 @@ Releases use semantic versions. The Git tag must be `v` followed by the exact `p
 3. Commit the version and lockfile, push `main`, and wait for its CI run to succeed:
 
    ```bash
-   VERSION=0.2.3
+   VERSION=0.3.0
    git add pyproject.toml uv.lock
    git commit -m "Prepare release v${VERSION}"
    git push origin main

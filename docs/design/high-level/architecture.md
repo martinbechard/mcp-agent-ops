@@ -21,6 +21,8 @@ No domain module depends on FastMCP. Adapters translate typed requests to domain
 
 The CLI adapter preserves the accepted `claim.py` registry, journal, output, and exit-code contracts as an operational fallback and black-box compatibility surface. MCP tools use a structured in-process dispatcher rather than capturing standard output. Repository-global file locks remain the cross-process ownership authority, while unrelated repositories can proceed concurrently inside one MCP server.
 
+Every claim records one file domain: project-files, backlog, all-files, or none for resource-only compatibility. Exact paths are classified into project or backlog ownership. The claims domain rejects mixed ownership before registry mutation, routes backlog and all-files to the primary worktree, and creates eligible project isolation only at the canonical ignored worktree root with backlog excluded. Domain-aware baseline evidence lets release distinguish owned work from unchanged outside dirtiness and reject later outside changes without staging, reverting, or cleaning them. The MCP and CLI adapters only translate these engine outcomes.
+
 ## Verification boundary
 
 Verification operations are deliberately composable rather than embedding `dev-methodology` policy. The later methodology retrofit can call these primitives and continue to own methodology-specific profiles and expectations.

@@ -7,14 +7,22 @@ The server intentionally publishes small named operations so an LLM supplies dat
 | Tool | Required arguments | Purpose |
 |---|---|---|
 | `claim_status` | `repository` | Read the authoritative live registry. |
-| `claim_acquire` | `repository`, `claim_id`, `agent`, `task`, `root_task_id` | Acquire exact files, trees, all files, or exclusive resources atomically. |
-| `claim_extend` | `repository`, `claim_id` | Add newly discovered scope atomically. |
+| `claim_acquire` | `repository`, `claim_id`, `agent`, `task`, `root_task_id` | Acquire one project-files, backlog, all-files, explicit-path domain, plus optional resources. |
+| `claim_extend` | `repository`, `claim_id` | Add newly discovered same-domain scope atomically. |
 | `claim_heartbeat` | `repository`, `claim_id` | Refresh an active heartbeat. |
 | `claim_release` | `repository`, `claim_id` | Release a clean committed or explicit no-change claim. |
 | `claim_maintain_journal` | `repository` | Retain the hot UTC window and archive older complete days. |
 | `claim_report` | `repository` | Return structured contention and lifecycle metrics. |
 
 Claim results contain `exit_code` and the copied engine's structured `result`. The result outcome remains authoritative: successful calls can have different outcomes, and unsuccessful ownership attempts such as `WAIT` are valid structured results rather than protocol failures.
+
+The broad file selectors are mutually exclusive:
+
+- `project_files` owns the repository file tree except `backlog` and ignored operational worktree state. It requires `scope_reason` and may use a canonical `.worktrees/<claim-id>` checkout when another independent project claim is active.
+- `backlog` owns the complete backlog subtree and is primary-worktree-only.
+- `all_files` explicitly owns both domains, requires `scope_reason`, and is primary-worktree-only.
+
+Explicit backlog files and trees remain compatible inputs and are reported with `compat_backlog_path`. A request mixing project and backlog paths returns `INVALID_SCOPE` with reason `mixed_file_domains`. Backlog or all-files acquisition while the primary worktree is occupied, and backlog-domain extension from an isolated claim, returns `PRIMARY_REQUIRED` with exit code 3 without changing the registry. Release rejects post-acquisition out-of-domain worktree changes as `out_of_domain_changes` and out-of-domain committed paths as `out_of_domain_commit`.
 
 Repository and worktree paths must be absolute and resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`.
 
@@ -27,7 +35,8 @@ Example acquisition arguments:
   "agent": "implementation-agent",
   "task": "task-123",
   "root_task_id": "task-123",
-  "files": ["src/feature.py", "tests/test_feature.py"]
+  "project_files": true,
+  "scope_reason": "project implementation"
 }
 ```
 
