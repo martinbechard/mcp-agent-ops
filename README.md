@@ -86,6 +86,8 @@ The server uses stdio by default. Configure all three path boundaries before exp
 - `MCP_AGENT_OPS_DETECTION_REGISTRY` identifies the trusted methodology-owned technology registry.
 - `MCP_AGENT_OPS_WORKSPACE_ROOTS` contains allowed project and worktree roots, separated by the operating system path separator.
 
+When the server starts with its working directory beneath a configured workspace root, it automatically overlays recursively discovered skills from `<cwd>/.agents/skills` and `<cwd>/.codex/skills` ahead of the configured user roots. The `.agents` project root has precedence over the `.codex` project root. Nested project skill directories are supported; duplicate skill names inside either one project root are rejected as ambiguous. `skill_refresh` rescans both project and configured roots.
+
 Repository, project, verification, worktree, and validation paths supplied through tools must be absolute and resolve beneath their configured boundary. Catalog discovery, skill validation, and technology detection recheck every nested manifest, metadata file, source file, and supporting resource before reading it. The server rejects missing boundary configuration, traversal, and symlink escape rather than granting ambient filesystem access.
 
 The skill catalog is built lazily and reused for the life of the server process. `skill_refresh` atomically publishes a new catalog snapshot after installed skills change. Technology registry configuration is also cached and takes effect after restarting the server. Claim state remains disk-authoritative and coordinates across server processes.

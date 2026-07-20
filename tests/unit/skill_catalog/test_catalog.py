@@ -45,6 +45,29 @@ def test_catalog_uses_root_precedence_and_reports_shadowed_skills(tmp_path: Path
     assert "shadowed_paths" not in published.skills[0].model_dump()
 
 
+def test_catalog_recursively_discovers_nested_skills_in_selected_roots(tmp_path: Path) -> None:
+    root = tmp_path / "project" / ".agents" / "skills"
+    skill = write_skill(
+        root,
+        "backend/persistence/sql",
+        "sql",
+        "Project SQL skill.",
+    )
+
+    catalog = SkillCatalog.from_roots([root], recursive_roots=[root])
+
+    assert catalog.get("sql").path == str((skill / "SKILL.md").resolve())
+
+
+def test_catalog_rejects_duplicate_names_within_one_recursive_root(tmp_path: Path) -> None:
+    root = tmp_path / "project" / ".agents" / "skills"
+    write_skill(root, "backend/sql", "sql", "Backend SQL skill.")
+    write_skill(root, "reporting/sql", "sql", "Reporting SQL skill.")
+
+    with pytest.raises(ValueError, match="duplicate skill name 'sql'"):
+        SkillCatalog.from_roots([root], recursive_roots=[root])
+
+
 def test_catalog_reads_complete_skill_and_lists_supporting_resources(tmp_path: Path) -> None:
     root = tmp_path / "skills"
     skill = write_skill(root, "example", "example", "Example skill.", "# Example\n\nDo the work.\n")

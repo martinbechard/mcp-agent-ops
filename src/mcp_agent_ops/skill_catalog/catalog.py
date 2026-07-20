@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Discovers precedence-ordered skills and safely returns complete skill content and resources.
+# Summary: Discovers precedence-ordered and selected recursive skill roots with safe content access.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
@@ -10,6 +10,7 @@ import base64
 import hashlib
 import json
 import mimetypes
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -85,11 +86,19 @@ def _within_root(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
 
-def _skill_files(root: Path) -> list[Path]:
+def _skill_files(root: Path, recursive: bool) -> list[Path]:
     exact = root / "SKILL.md"
     if exact.is_file():
         return [exact]
-    return sorted(root.glob("*/SKILL.md"))
+    candidates = root.rglob("SKILL.md") if recursive else root.glob("*/SKILL.md")
+    return sorted(
+        candidate
+        for candidate in candidates
+        if not any(
+            part.startswith(".")
+            for part in candidate.relative_to(root).parts[:-1]
+        )
+    )
 
 
 def _catalog_revision(entries: dict[str, SkillEntry]) -> str:
@@ -127,26 +136,40 @@ class SkillCatalog:
         self._revision = _catalog_revision(entries)
 
     @classmethod
-    def from_roots(cls, roots: list[Path]) -> SkillCatalog:
+    def from_roots(
+        cls,
+        roots: list[Path],
+        recursive_roots: Sequence[Path] | None = None,
+    ) -> SkillCatalog:
         """Discover complete `SKILL.md` files from precedence-ordered roots.
 
         Args:
-            roots: Directories whose immediate children may be skill directories. Earlier
-                roots win when multiple definitions declare the same skill name.
+            roots: Exact skill directories or directories containing skill directories.
+                Earlier roots win when multiple roots declare the same skill name.
+            recursive_roots: Selected members of `roots` whose nested directories are
+                recursively searched for skill manifests. Other roots retain one-level
+                discovery for compatibility.
 
         Returns:
             A snapshot catalog including lower-precedence shadowed definition paths.
 
         Raises:
-            ValueError: If a discovered skill has invalid or incomplete frontmatter.
+            ValueError: If a discovered skill has invalid or incomplete frontmatter, or
+                one recursive root contains ambiguous definitions of the same skill name.
         """
         resolved_roots = [root.expanduser().resolve() for root in roots]
+        resolved_recursive_roots = {
+            root.expanduser().resolve() for root in recursive_roots or []
+        }
+        if not resolved_recursive_roots.issubset(resolved_roots):
+            raise ValueError("Recursive skill roots must also be configured skill roots.")
         entries: dict[str, SkillEntry] = {}
         contents: dict[str, str] = {}
         for root in resolved_roots:
             if not root.is_dir():
                 continue
-            for skill_file in _skill_files(root):
+            names_in_root: dict[str, Path] = {}
+            for skill_file in _skill_files(root, root in resolved_recursive_roots):
                 resolved_skill_file = skill_file.resolve()
                 if not any(_within_root(resolved_skill_file, allowed) for allowed in resolved_roots):
                     raise ValueError(
@@ -163,6 +186,13 @@ class SkillCatalog:
                     raise ValueError(
                         f"SKILL.md frontmatter description must be a non-empty string: {resolved_skill_file}"
                     )
+                if root in resolved_recursive_roots:
+                    duplicate = names_in_root.get(name)
+                    if duplicate is not None and duplicate != resolved_skill_file:
+                        raise ValueError(
+                            f"Recursive skill root contains duplicate skill name '{name}': {root}"
+                        )
+                    names_in_root[name] = resolved_skill_file
                 existing = entries.get(name)
                 if existing is not None:
                     if existing.path != str(resolved_skill_file):

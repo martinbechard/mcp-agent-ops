@@ -4,7 +4,7 @@
 
 - YAML duplicate-key, syntax, selection, and path-boundary behavior.
 - Markdown local-link resolution, anchors, missing targets, ignored remote schemes, and malformed links.
-- Skill-root precedence, metadata parsing, digest/content pairing, hidden install roots, resource listing, shadowing, symlink escape, explicit-refresh visibility, batch ordering, batch rejection, and traversal rejection.
+- Working-directory project overlays, recursive nested project discovery, skill-root precedence, same-root ambiguity rejection, metadata parsing, digest/content pairing, hidden install roots, resource listing, shadowing, symlink escape, explicit-refresh visibility, batch ordering, batch rejection, and traversal rejection.
 - Technology registry reuse and one manifest-evidence computation per scope.
 - Nested source, owner-manifest, owner-evidence, skill-manifest, and adapter-metadata symlink escape rejection, including explicitly allowed secondary skill roots and safe in-project links.
 - Markdown target caching within one verification operation.

@@ -260,6 +260,54 @@ async def test_server_reuses_one_catalog_snapshot_until_explicit_refresh(tmp_pat
     )
 
 
+async def test_server_overlays_nested_project_skills_from_working_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "project"
+    user_skills = tmp_path / "user-skills"
+    project_skill = project / ".agents" / "skills" / "backend" / "example"
+    project_skill.mkdir(parents=True)
+    (project_skill / "SKILL.md").write_text(
+        "---\nname: example\ndescription: Project example skill.\n---\n\n# Project\n",
+        encoding="utf-8",
+    )
+    codex_skill = project / ".codex" / "skills" / "example"
+    codex_skill.mkdir(parents=True)
+    (codex_skill / "SKILL.md").write_text(
+        "---\nname: example\ndescription: Codex project skill.\n---\n\n# Codex\n",
+        encoding="utf-8",
+    )
+    _write_skill(user_skills)
+    monkeypatch.chdir(project)
+    server = create_server(
+        [user_skills],
+        workspace_roots=[tmp_path],
+    )
+
+    async with Client(server) as client:
+        catalog = await client.call_tool("skill_list", {})
+        loaded = await client.call_tool("skill_read", {"name": "example"})
+
+    assert catalog.structured_content["skills"][0]["description"] == "Project example skill."
+    assert catalog.structured_content["skills"][0]["shadowed_count"] == 2
+    assert loaded.structured_content["content"].endswith("# Project\n")
+
+
+def test_server_rejects_project_skill_root_symlink_escape(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    external_skills = tmp_path / "external-skills"
+    (project / ".agents").mkdir(parents=True)
+    external_skills.mkdir()
+    (project / ".agents" / "skills").symlink_to(
+        external_skills,
+        target_is_directory=True,
+    )
+
+    with pytest.raises(ValueError, match="outside the project root"):
+        create_server(skill_roots=[], workspace_roots=[tmp_path], project_root=project)
+
+
 async def test_server_publishes_skill_catalog_and_complete_skill_resources(tmp_path: Path) -> None:
     skills = tmp_path / "skills"
     _write_skill(skills)

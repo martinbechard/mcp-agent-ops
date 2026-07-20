@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Publishes concise typed FastMCP tools and resources over the copied scripts and domain services.
+# Summary: Publishes typed FastMCP operations with a working-directory project skill overlay.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
@@ -146,6 +146,26 @@ def configured_workspace_roots() -> list[Path]:
     return [Path(value).expanduser() for value in raw.split(os.pathsep) if value]
 
 
+def _within_root(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
+def _project_skill_roots(project_root: Path, workspace_roots: Sequence[Path]) -> list[Path]:
+    """Return safe conventional project skill roots when the project is in scope."""
+    resolved_project = project_root.expanduser().resolve()
+    resolved_workspaces = [root.expanduser().resolve() for root in workspace_roots]
+    if not any(_within_root(resolved_project, root) for root in resolved_workspaces):
+        return []
+    roots = [
+        resolved_project / ".agents" / "skills",
+        resolved_project / ".codex" / "skills",
+    ]
+    resolved_roots = [root.resolve() for root in roots]
+    if not all(_within_root(root, resolved_project) for root in resolved_roots):
+        raise ValueError("Project skill root resolves outside the project root.")
+    return resolved_roots
+
+
 def configured_audit_log() -> Path | None:
     """Return the evaluator-controlled digest-only audit log path, if configured."""
     value = os.environ.get("MCP_AGENT_OPS_AUDIT_LOG")
@@ -188,6 +208,7 @@ def create_server(
     audit_roots: Sequence[Path] | None = None,
     audit_shared: bool | None = None,
     audit_session_id: str | None = None,
+    project_root: Path | None = None,
 ) -> FastMCP:
     """Create the MCP agent-operations server with immutable read snapshots.
 
@@ -202,6 +223,9 @@ def create_server(
         audit_roots: Optional allowed roots for the audit log, replacing environment configuration.
         audit_shared: Allow inherited MCP server processes to append separate streams to one log.
         audit_session_id: Optional evaluator-generated identity copied into every audit record.
+        project_root: Working-directory project context used for automatic recursive
+            `.agents/skills` and `.codex/skills` discovery. Defaults to the process
+            working directory and is ignored unless it is inside a configured workspace.
 
     Returns:
         A FastMCP server ready for in-memory testing or stdio execution.
@@ -217,6 +241,8 @@ def create_server(
         if workspace_roots is not None
         else configured_workspace_roots()
     )
+    project_roots = _project_skill_roots(project_root or Path.cwd(), workspaces)
+    catalog_roots = [*project_roots, *roots]
     configured_log = audit_log if audit_log is not None else configured_audit_log()
     allowed_audit_roots = (
         list(audit_roots) if audit_roots is not None else configured_audit_roots()
@@ -248,7 +274,10 @@ def create_server(
 
     def build_catalog() -> SkillCatalog:
         try:
-            return SkillCatalog.from_roots(roots)
+            return SkillCatalog.from_roots(
+                catalog_roots,
+                recursive_roots=project_roots,
+            )
         except (OSError, UnicodeError, ValueError, yaml.YAMLError):
             raise ValueError("Configured skill catalog is invalid.") from None
 
@@ -270,7 +299,7 @@ def create_server(
         return resolve_within_roots(workspaces, value, "workspace")
 
     def skill_path(value: str) -> Path:
-        return resolve_within_roots(roots, value, "skill")
+        return resolve_within_roots(catalog_roots, value, "skill")
 
     def detection_catalog() -> dict[str, object]:
         nonlocal detection_snapshot
@@ -492,7 +521,7 @@ def create_server(
 
     @mcp.tool
     def skill_refresh() -> PublishedSkillCatalog:
-        """Atomically replace the process-local catalog snapshot from configured roots."""
+        """Atomically refresh project and configured user skill roots."""
         return refresh_catalog().public_result()
 
     @mcp.tool
@@ -500,7 +529,7 @@ def create_server(
         """Validate Agent Skill roots, directories, or exact `SKILL.md` files."""
         return validate_skills(
             [skill_path(path) for path in paths],
-            allowed_roots=roots,
+            allowed_roots=catalog_roots,
         )
 
     @mcp.tool
@@ -511,7 +540,7 @@ def create_server(
                 "Technology detection requires MCP_AGENT_OPS_DETECTION_REGISTRY configuration."
             )
         current_catalog = catalog().public_result()
-        skills_root = roots[0] if roots else registry.parent
+        skills_root = catalog_roots[0] if catalog_roots else registry.parent
         detected = detect_domain(
             workspace_path(project_root),
             scopes,
