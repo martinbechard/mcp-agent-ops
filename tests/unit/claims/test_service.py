@@ -97,3 +97,47 @@ def test_same_repository_claim_calls_preserve_one_authoritative_owner(tmp_path: 
     status = service.run_claim_command(["--repo", str(repository), "status"])
     assert len(status.result["claims"]) == 1
     assert status.result["claims"][0]["claim_id"] in {"first", "second"}
+
+
+def test_primary_location_resource_requires_shared_checkout_release(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    _initialize_repository(repository)
+    first = service.run_claim_command([
+        "--repo",
+        str(repository),
+        "acquire",
+        "--claim-id",
+        "first",
+        "--agent",
+        "first",
+        "--task",
+        "first",
+        "--root-task-id",
+        "first",
+        "--file",
+        "README.md",
+    ])
+
+    result = service.run_claim_command([
+        "--repo",
+        str(repository),
+        "acquire",
+        "--claim-id",
+        "resource",
+        "--agent",
+        "resource",
+        "--task",
+        "resource",
+        "--root-task-id",
+        "resource",
+        "--resource",
+        "git-index:primary",
+        "--branch",
+        "codex/resource",
+    ])
+
+    assert first.exit_code == 0
+    assert result.exit_code == 3
+    assert result.result["outcome"] == "SHARED_CHECKOUT_RELEASE_REQUIRED"
+    assert result.result["legacy_outcome"] == "PRIMARY_REQUIRED"
+    assert not (repository / ".worktrees" / "resource").exists()

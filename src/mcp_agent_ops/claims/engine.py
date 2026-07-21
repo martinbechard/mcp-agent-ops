@@ -35,6 +35,7 @@ BACKLOG_ROOT_DIRECTORY = "backlog"
 WORKTREE_ROOT_DIRECTORY = ".worktrees"
 WORKTREE_IGNORE_PATTERN = "/.worktrees/"
 ISOLATED_SPARSE_CHECKOUT_PATTERNS = ("/*", "!/backlog/")
+PRIMARY_WORKTREE_RESOURCES = frozenset({"git-index:primary", "merge:integration:main"})
 REGISTRY_FILE_NAME = "agent-claims.json"
 LOCK_FILE_NAME = "agent-claims.lock"
 EVENT_DIRECTORY_NAME = "agent-claim-events"
@@ -650,7 +651,10 @@ def _path_scopes(scope: dict[str, Any], include_broad: bool = True) -> list[tupl
 
 
 def _scope_requires_primary_worktree(scope: dict[str, Any]) -> bool:
-    return scope.get("file_domain") in {"backlog", "all_files"}
+    return scope.get("file_domain") in {"backlog", "all_files"} or any(
+        resource in PRIMARY_WORKTREE_RESOURCES
+        for resource in scope.get("resources", [])
+    )
 
 
 def _scope_file_domain(scope: dict[str, Any]) -> str:
@@ -878,6 +882,35 @@ def _canonical_outcome(outcome: str, shared_checkout_claimed: bool = False) -> s
     return LEGACY_OUTCOME_ALIASES.get(outcome, outcome)
 
 
+def _normalized_event_outcomes(
+    events: Sequence[dict[str, Any]],
+) -> tuple[list[str], list[dict[str, str]]]:
+    normalized: list[str] = []
+    gaps: list[dict[str, str]] = []
+    for event in sorted(events, key=_event_sort_key):
+        event_id = str(event.get("event_id") or "")
+        raw_outcome = str(event.get("outcome"))
+        if raw_outcome == "PRIMARY_REQUIRED":
+            shared_checkout_claimed = event.get("shared_checkout_claimed")
+            if isinstance(shared_checkout_claimed, bool):
+                outcome = _canonical_outcome(raw_outcome, shared_checkout_claimed)
+            else:
+                outcome = raw_outcome
+                gaps.append(
+                    {
+                        "source": event_id,
+                        "detail": (
+                            "legacy PRIMARY_REQUIRED lacks deterministic "
+                            "shared-checkout ownership evidence"
+                        ),
+                    }
+                )
+        else:
+            outcome = _canonical_outcome(raw_outcome)
+        normalized.append(outcome)
+    return normalized, gaps
+
+
 def _append_event(common_directory: Path, event: dict[str, Any]) -> Path:
     if os.environ.get("AGENT_CLAIM_TEST_FAIL_JOURNAL_WRITE") == "1":
         raise OSError("simulated journal write failure")
@@ -985,7 +1018,17 @@ def _primary_required_result(
     shared_checkout_claimed: bool = False,
     **details: Any,
 ) -> int:
-    reason = "backlog_requires_primary_worktree"
+    backlog_scope = requested_scope.get("file_domain") in {"backlog", "all_files"}
+    reason = (
+        "backlog_requires_primary_worktree"
+        if backlog_scope
+        else "primary_location_resource_requires_primary_worktree"
+    )
+    message = (
+        "Backlog scope is available only from the primary worktree."
+        if backlog_scope
+        else "The requested primary-location resource is available only from the primary worktree."
+    )
     event = _event(
         action,
         "PRIMARY_REQUIRED",
@@ -993,6 +1036,7 @@ def _primary_required_result(
         claim=claim,
         requested_scope=requested_scope,
         reason=reason,
+        shared_checkout_claimed=shared_checkout_claimed,
         command_warnings=scope_warnings,
         **details,
     )
@@ -1006,7 +1050,7 @@ def _primary_required_result(
             shared_checkout_claimed=shared_checkout_claimed,
         ),
         reason=reason,
-        message="Backlog scope is available only from the primary worktree.",
+        message=message,
         requested_scopes=requested_scope,
         **details,
     )
@@ -1268,7 +1312,10 @@ def _extend(args: argparse.Namespace) -> int:
             event = _event("extend", "CLAIM_NOT_FOUND", args, requested_scope=requested_scope)
             return _journaled_result(ERROR, common_directory, event, claim_id=args.claim_id)
 
-        if claim.get("mode") == "isolated" and _scope_requires_primary_worktree(requested_scope):
+        if claim.get("mode") == "isolated" and requested_scope.get("file_domain") in {
+            "backlog",
+            "all_files",
+        }:
             return _primary_required_result(
                 common_directory,
                 "extend",
@@ -1578,8 +1625,13 @@ def _top_counts(counter: Counter[str]) -> list[dict[str, Any]]:
     ]
 
 
-def _aggregate(events: list[dict[str, Any]], now: datetime, live_claims: list[dict[str, Any]]) -> dict[str, Any]:
+def _aggregate(
+    events: list[dict[str, Any]],
+    now: datetime,
+    live_claims: list[dict[str, Any]],
+) -> dict[str, Any]:
     ordered = sorted(events, key=_event_sort_key)
+    normalized_outcomes, normalization_gaps = _normalized_event_outcomes(ordered)
     successful_outcomes = {
         "SHARED_CHECKOUT_ACQUIRED": "primary",
         "ISOLATED_CHECKOUT_ACQUIRED": "isolated",
@@ -1587,13 +1639,7 @@ def _aggregate(events: list[dict[str, Any]], now: datetime, live_claims: list[di
     }
     acquisitions = Counter()
     raw_outcome_counts = Counter(str(event.get("outcome")) for event in ordered)
-    outcome_counts = Counter(
-        _canonical_outcome(
-            str(event.get("outcome")),
-            shared_checkout_claimed=bool(event.get("active_claim_count")),
-        )
-        for event in ordered
-    )
+    outcome_counts = Counter(normalized_outcomes)
     action_counts = Counter(str(event.get("action")) for event in ordered)
     acquisition_times: dict[str, datetime] = {}
     released_claims: set[str] = set()
@@ -1609,11 +1655,8 @@ def _aggregate(events: list[dict[str, Any]], now: datetime, live_claims: list[di
     integration_resources: Counter[str] = Counter()
     journal_warning_count = 0
 
-    for event in ordered:
-        outcome = _canonical_outcome(
-            str(event.get("outcome")),
-            shared_checkout_claimed=bool(event.get("active_claim_count")),
-        )
+    for index, event in enumerate(ordered):
+        outcome = normalized_outcomes[index]
         action = str(event.get("action"))
         claim_id = str(event.get("claim_id") or "")
         timestamp = _parse_timestamp(str(event["timestamp"]))
@@ -1700,6 +1743,7 @@ def _aggregate(events: list[dict[str, Any]], now: datetime, live_claims: list[di
         "action_counts": dict(sorted(action_counts.items())),
         "outcome_counts": dict(sorted(outcome_counts.items())),
         "raw_outcome_counts": dict(sorted(raw_outcome_counts.items())),
+        "outcome_normalization_gaps": normalization_gaps,
         "successful_acquisitions": {
             mode: acquisitions.get(mode, 0) for mode in ("primary", "isolated", "recovery")
         },

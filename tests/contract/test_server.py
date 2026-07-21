@@ -152,6 +152,24 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
             == "SHARED_CHECKOUT_RELEASE_REQUIRED"
         )
         assert backlog_wait.structured_content["result"]["legacy_outcome"] == "PRIMARY_REQUIRED"
+        primary_resource_wait = await client.call_tool(
+            "claim_acquire",
+            {
+                "repository": str(repository),
+                "claim_id": "primary-resource",
+                "agent": "contract-test",
+                "task": "primary resource",
+                "root_task_id": "contract-test",
+                "resources": ["git-index:primary"],
+                "branch": "codex/primary-resource",
+            },
+        )
+        assert primary_resource_wait.structured_content["exit_code"] == 3
+        assert (
+            primary_resource_wait.structured_content["result"]["outcome"]
+            == "SHARED_CHECKOUT_RELEASE_REQUIRED"
+        )
+        assert not (repository / ".worktrees" / "primary-resource").exists()
         await client.call_tool(
             "claim_release",
             {"repository": str(repository), "claim_id": "project-domain", "no_change": True},

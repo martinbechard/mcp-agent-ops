@@ -14,7 +14,7 @@ The server intentionally publishes small named operations so an LLM supplies dat
 | `claim_maintain_journal` | `repository` | Retain the hot UTC window and archive older complete days. |
 | `claim_report` | `repository` | Return structured contention and lifecycle metrics. |
 
-Claim results contain `exit_code` and the copied engine's structured `result`. Result schema version 2 makes the result outcome authoritative and includes `legacy_outcome` only when the canonical name replaces a prior result name. Successful calls can have different outcomes, and unsuccessful ownership attempts such as `CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED` are valid structured results rather than protocol failures.
+Claim results contain `exit_code` and the copied engine's structured `result`. This source checkout advertises result schema version 2 through the claim tool descriptions. The result outcome is authoritative and includes `legacy_outcome` only when the canonical name replaces a prior result name. Successful calls can have different outcomes, and unsuccessful ownership attempts such as `CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED` are valid structured results rather than protocol failures. Clients must capability-gate schema version 2 rather than infer it from a package version; published release 0.4.0 predates this contract.
 
 | Canonical outcome | Meaning and next action | Legacy outcome | Exit code |
 |---|---|---|---|
@@ -27,7 +27,7 @@ Claim results contain `exit_code` and the copied engine's structured `result`. R
 | `ISOLATED_CHECKOUT_SETUP_REQUIRED` | No ownership was acquired because isolation arguments are required; prepare the returned target. | `ISOLATE_REQUIRED` | 4 |
 | `DIRTY_CHECKOUT_RECOVERY_AUTHORIZATION_REQUIRED` | No ownership was acquired because dirty state needs explicit recovery authority. | `RECOVERY_REQUIRED` | 5 |
 
-Unlisted explicit outcomes keep their existing names and omit `legacy_outcome`. Schema-version-1 journal events remain append-only with their original outcome strings. Reports normalize recognized legacy and canonical strings in `outcome_counts` while retaining original strings in `raw_outcome_counts`.
+Unlisted explicit outcomes keep their existing names and omit `legacy_outcome`. Schema-version-1 journal events remain append-only with their original outcome strings. New `PRIMARY_REQUIRED` events record explicit `shared_checkout_claimed` context. Reports use that context to distinguish the two canonical meanings, publish canonical `outcome_counts`, and retain original strings in `raw_outcome_counts`. Historical events without the field remain raw `PRIMARY_REQUIRED` and appear in `outcome_normalization_gaps`; active claim counts are not treated as proof of shared-checkout ownership.
 
 The broad file selectors are mutually exclusive:
 
