@@ -122,6 +122,11 @@ def _claim_owns_primary_worktree(claim: dict[str, Any], primary_worktree: Path) 
     return isinstance(worktree, str) and Path(worktree).resolve() == primary_worktree
 
 
+def _shared_checkout_is_claimed(repository: Path, claims: Sequence[dict[str, Any]]) -> bool:
+    primary_worktree = _primary_worktree(repository)
+    return any(_claim_owns_primary_worktree(claim, primary_worktree) for claim in claims)
+
+
 def _worktree_root_is_ignored(repository: Path) -> bool:
     primary_worktree = _primary_worktree(repository)
     probe = f"{WORKTREE_ROOT_DIRECTORY}/.agent-claim-ignore-probe"
@@ -1323,6 +1328,7 @@ def _extend(args: argparse.Namespace) -> int:
                 requested_scope,
                 scope_warnings,
                 claim=claim,
+                shared_checkout_claimed=_shared_checkout_is_claimed(repository, claims),
             )
 
         try:
@@ -1361,6 +1367,7 @@ def _extend(args: argparse.Namespace) -> int:
                 requested_scope,
                 scope_warnings,
                 claim=claim,
+                shared_checkout_claimed=_shared_checkout_is_claimed(repository, claims),
                 added_scope=added,
                 already_owned_scope=already_owned,
             )
