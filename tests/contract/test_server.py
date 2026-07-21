@@ -88,9 +88,9 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
             assert properties["all_files"]["type"] == "boolean"
             assert ".worktrees/<claim-id>" in properties["project_files"]["description"]
             assert "backlog omitted by sparse checkout" in properties["project_files"]["description"]
-            assert "PRIMARY_REQUIRED" in properties["backlog"]["description"]
+            assert "SHARED_CHECKOUT_RELEASE_REQUIRED" in properties["backlog"]["description"]
             assert "requires scope_reason" in properties["all_files"]["description"]
-        assert "PRIMARY_REQUIRED" in (claim_tools["claim_acquire"].description or "")
+        assert "SHARED_CHECKOUT_ACQUIRED" in (claim_tools["claim_acquire"].description or "")
         assert ".worktrees/<claim-id>" in (claim_tools["claim_acquire"].description or "")
         assert "backlog omitted" in (claim_tools["claim_acquire"].description or "")
         assert "all-files extension" in (claim_tools["claim_extend"].description or "")
@@ -101,7 +101,7 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
         assert status.structured_content["result"]["claims"] == []
         report = await client.call_tool("claim_report", {"repository": str(repository)})
         assert report.structured_content["exit_code"] == 0
-        assert report.structured_content["result"]["schema_version"] == 1
+        assert report.structured_content["result"]["schema_version"] == 2
 
         acquired = await client.call_tool(
             "claim_acquire",
@@ -114,7 +114,8 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
                 "files": ["README.md"],
             },
         )
-        assert acquired.structured_content["result"]["outcome"] == "PRIMARY"
+        assert acquired.structured_content["result"]["outcome"] == "SHARED_CHECKOUT_ACQUIRED"
+        assert acquired.structured_content["result"]["legacy_outcome"] == "PRIMARY"
         released = await client.call_tool(
             "claim_release",
             {"repository": str(repository), "claim_id": "contract-claim", "no_change": True},
@@ -146,7 +147,11 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
             },
         )
         assert backlog_wait.structured_content["exit_code"] == 3
-        assert backlog_wait.structured_content["result"]["outcome"] == "PRIMARY_REQUIRED"
+        assert (
+            backlog_wait.structured_content["result"]["outcome"]
+            == "SHARED_CHECKOUT_RELEASE_REQUIRED"
+        )
+        assert backlog_wait.structured_content["result"]["legacy_outcome"] == "PRIMARY_REQUIRED"
         await client.call_tool(
             "claim_release",
             {"repository": str(repository), "claim_id": "project-domain", "no_change": True},
@@ -827,7 +832,7 @@ async def test_server_audit_records_bounded_domain_outcomes(tmp_path: Path) -> N
     }
     assert outcomes == {
         "skill_list": "CATALOG",
-        "claim_acquire": "PRIMARY",
+        "claim_acquire": "SHARED_CHECKOUT_ACQUIRED",
         "verify_yaml": "OK",
         "claim_release": "RELEASED",
     }

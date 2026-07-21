@@ -14,7 +14,20 @@ The server intentionally publishes small named operations so an LLM supplies dat
 | `claim_maintain_journal` | `repository` | Retain the hot UTC window and archive older complete days. |
 | `claim_report` | `repository` | Return structured contention and lifecycle metrics. |
 
-Claim results contain `exit_code` and the copied engine's structured `result`. The result outcome remains authoritative: successful calls can have different outcomes, and unsuccessful ownership attempts such as `WAIT` are valid structured results rather than protocol failures.
+Claim results contain `exit_code` and the copied engine's structured `result`. Result schema version 2 makes the result outcome authoritative and includes `legacy_outcome` only when the canonical name replaces a prior result name. Successful calls can have different outcomes, and unsuccessful ownership attempts such as `CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED` are valid structured results rather than protocol failures.
+
+| Canonical outcome | Meaning and next action | Legacy outcome | Exit code |
+|---|---|---|---|
+| `SHARED_CHECKOUT_ACQUIRED` | Ownership was acquired in the repository's existing shared checkout; work only within the acquired scope there. | `PRIMARY` | 0 |
+| `ISOLATED_CHECKOUT_ACQUIRED` | Ownership was acquired in a prepared isolated checkout; work in the returned checkout. | `ISOLATE` | 0 |
+| `DIRTY_CHECKOUT_RECOVERY_ACQUIRED` | Recovery ownership was acquired over authorized dirty state; checkpoint it before cleanup. | `RECOVER` | 0 |
+| `CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED` | No ownership was acquired because scope overlaps another owner; await a handoff or choose non-overlapping scope. | `WAIT` | 3 |
+| `SHARED_CHECKOUT_REQUIRED` | No ownership was acquired because the operation must run from the shared checkout; hand it there. | `PRIMARY_REQUIRED` | 3 |
+| `SHARED_CHECKOUT_RELEASE_REQUIRED` | No ownership was acquired because another claim owns the shared checkout; await release notification. | `PRIMARY_REQUIRED` | 3 |
+| `ISOLATED_CHECKOUT_SETUP_REQUIRED` | No ownership was acquired because isolation arguments are required; prepare the returned target. | `ISOLATE_REQUIRED` | 4 |
+| `DIRTY_CHECKOUT_RECOVERY_AUTHORIZATION_REQUIRED` | No ownership was acquired because dirty state needs explicit recovery authority. | `RECOVERY_REQUIRED` | 5 |
+
+Unlisted explicit outcomes keep their existing names and omit `legacy_outcome`. Schema-version-1 journal events remain append-only with their original outcome strings. Reports normalize recognized legacy and canonical strings in `outcome_counts` while retaining original strings in `raw_outcome_counts`.
 
 The broad file selectors are mutually exclusive:
 
@@ -22,7 +35,7 @@ The broad file selectors are mutually exclusive:
 - `backlog` owns the complete backlog subtree and is primary-worktree-only.
 - `all_files` explicitly owns both domains, requires `scope_reason`, and is primary-worktree-only.
 
-Explicit backlog files and trees remain compatible inputs and are reported with `compat_backlog_path`. A request mixing project and backlog paths returns `INVALID_SCOPE` with reason `mixed_file_domains`. Backlog or all-files acquisition while the primary worktree is occupied, and backlog-domain extension from an isolated claim, returns `PRIMARY_REQUIRED` with exit code 3 without changing the registry. Release rejects post-acquisition out-of-domain worktree changes as `out_of_domain_changes` and out-of-domain committed paths as `out_of_domain_commit`.
+Explicit backlog files and trees remain compatible inputs and are reported with `compat_backlog_path`. A request mixing project and backlog paths returns `INVALID_SCOPE` with reason `mixed_file_domains`. Backlog or all-files acquisition while the shared checkout is occupied returns `SHARED_CHECKOUT_RELEASE_REQUIRED`; the same request from another checkout when the shared checkout is available, including backlog-domain extension from an isolated claim, returns `SHARED_CHECKOUT_REQUIRED`. Both retain exit code 3 and leave the registry unchanged. Release rejects post-acquisition out-of-domain worktree changes as `out_of_domain_changes` and out-of-domain committed paths as `out_of_domain_commit`.
 
 Repository and worktree paths must be absolute and resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`.
 

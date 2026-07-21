@@ -69,7 +69,8 @@ _BacklogScope = Annotated[
     Field(
         description=(
             "Select the complete primary-worktree-only backlog. Mutually exclusive with project_files "
-            "and all_files; returns PRIMARY_REQUIRED when primary ownership is unavailable."
+            "and all_files; returns SHARED_CHECKOUT_RELEASE_REQUIRED when another claim owns "
+            "the shared checkout, or SHARED_CHECKOUT_REQUIRED from another checkout."
         )
     ),
 ]
@@ -349,9 +350,12 @@ def create_server(
         worktree's canonical .worktrees/<claim-id> root, with backlog omitted through
         worktree-specific sparse checkout. Backlog and all-files are primary-worktree-only.
         The three broad selectors are mutually exclusive; project-files and all-files
-        require scope_reason. Returns PRIMARY, ISOLATE, WAIT, PRIMARY_REQUIRED,
-        ISOLATE_REQUIRED, RECOVERY_REQUIRED, RECOVER, or a structured rejection with the
-        copied claim engine's stable exit code.
+        require scope_reason. Schema-version-2 results return SHARED_CHECKOUT_ACQUIRED,
+        ISOLATED_CHECKOUT_ACQUIRED, CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED,
+        SHARED_CHECKOUT_REQUIRED, SHARED_CHECKOUT_RELEASE_REQUIRED,
+        ISOLATED_CHECKOUT_SETUP_REQUIRED, DIRTY_CHECKOUT_RECOVERY_AUTHORIZATION_REQUIRED,
+        DIRTY_CHECKOUT_RECOVERY_ACQUIRED, or a structured rejection with the copied claim
+        engine's stable exit code. Renamed outcomes also carry legacy_outcome.
         """
         arguments = [
             "--repo",
@@ -405,8 +409,8 @@ def create_server(
         """Atomically add same-domain scope without weakening existing ownership.
 
         Backlog-domain or all-files extension from an isolated claim returns
-        PRIMARY_REQUIRED. Mixed project/backlog extension returns structured INVALID_SCOPE;
-        project-files and all-files require scope_reason.
+        SHARED_CHECKOUT_REQUIRED. Mixed project/backlog extension returns structured
+        INVALID_SCOPE; project-files and all-files require scope_reason.
         """
         arguments = [
             "--repo",

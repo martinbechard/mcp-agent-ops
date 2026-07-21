@@ -89,7 +89,11 @@ def test_same_repository_claim_calls_preserve_one_authoritative_owner(tmp_path: 
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(acquire, ("first", "second")))
 
-    assert sorted(result.result["outcome"] for result in results) == ["PRIMARY", "WAIT"]
+    assert sorted(result.result["outcome"] for result in results) == [
+        "CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED",
+        "SHARED_CHECKOUT_ACQUIRED",
+    ]
+    assert all(result.result["schema_version"] == 2 for result in results)
     status = service.run_claim_command(["--repo", str(repository), "status"])
     assert len(status.result["claims"]) == 1
     assert status.result["claims"][0]["claim_id"] in {"first", "second"}

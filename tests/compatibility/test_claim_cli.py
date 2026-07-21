@@ -152,7 +152,9 @@ class AgentClaimTests(unittest.TestCase):
 
         self.assertEqual(0, completed.returncode, completed.stderr)
         result = self.output(completed)
-        self.assertEqual("PRIMARY", result["outcome"])
+        self.assertEqual(2, result["schema_version"])
+        self.assertEqual("SHARED_CHECKOUT_ACQUIRED", result["outcome"])
+        self.assertEqual("PRIMARY", result["legacy_outcome"])
         self.assertEqual(str(self.repository.resolve()), result["claim"]["worktree"])
         self.assertEqual("primary", result["target"]["mode"])
 
@@ -168,7 +170,9 @@ class AgentClaimTests(unittest.TestCase):
 
         self.assertEqual(0, first.returncode, first.stderr)
         self.assertEqual(0, second.returncode, second.stderr)
-        self.assertEqual("ISOLATE", self.output(second)["outcome"])
+        result = self.output(second)
+        self.assertEqual("ISOLATED_CHECKOUT_ACQUIRED", result["outcome"])
+        self.assertEqual("ISOLATE", result["legacy_outcome"])
         self.assertTrue((isolated_path / ".git").is_file())
         self.assertFalse((isolated_path / "backlog").exists())
 
@@ -183,7 +187,56 @@ class AgentClaimTests(unittest.TestCase):
         return_codes = sorted(code for _stdout, _stderr, code in completed)
 
         self.assertEqual([0, 4], return_codes)
-        self.assertEqual({"PRIMARY", "ISOLATE_REQUIRED"}, outcomes)
+        self.assertEqual(
+            {"ISOLATED_CHECKOUT_SETUP_REQUIRED", "SHARED_CHECKOUT_ACQUIRED"},
+            outcomes,
+        )
+
+    def test_required_action_outcomes_keep_stable_exit_codes_and_legacy_aliases(self) -> None:
+        first = self.claim(*self.acquire_arguments("first"), "--file", "README.md")
+        isolation = self.claim(*self.acquire_arguments("isolated"), "--file", "src/one.py")
+        backlog = self.claim(*self.acquire_arguments("backlog"), "--backlog")
+        released = self.claim("release", "--claim-id", "first", "--no-change")
+        (self.repository / "README.md").write_text("dirty\n", encoding="utf-8")
+        recovery = self.claim(*self.acquire_arguments("recovery"), "--file", "README.md")
+
+        self.assertEqual(0, first.returncode, first.stderr)
+        self.assertEqual(4, isolation.returncode)
+        self.assertEqual(
+            ("ISOLATED_CHECKOUT_SETUP_REQUIRED", "ISOLATE_REQUIRED"),
+            (self.output(isolation)["outcome"], self.output(isolation)["legacy_outcome"]),
+        )
+        self.assertEqual(3, backlog.returncode)
+        self.assertEqual(
+            ("SHARED_CHECKOUT_RELEASE_REQUIRED", "PRIMARY_REQUIRED"),
+            (self.output(backlog)["outcome"], self.output(backlog)["legacy_outcome"]),
+        )
+        self.assertEqual(0, released.returncode, released.stderr)
+        self.assertEqual(5, recovery.returncode)
+        self.assertEqual(
+            (
+                "DIRTY_CHECKOUT_RECOVERY_AUTHORIZATION_REQUIRED",
+                "RECOVERY_REQUIRED",
+            ),
+            (self.output(recovery)["outcome"], self.output(recovery)["legacy_outcome"]),
+        )
+
+    def test_isolated_backlog_request_requires_the_available_shared_checkout(self) -> None:
+        self.claim(*self.acquire_arguments("first"), "--file", "README.md")
+        isolated, isolated_path = self.isolated_arguments("isolated")
+        self.claim(*self.acquire_arguments("isolated"), "--file", "src/one.py", *isolated)
+        self.claim("release", "--claim-id", "first", "--no-change")
+
+        completed = self.claim(
+            *self.acquire_arguments("backlog"),
+            "--backlog",
+            repo=isolated_path,
+        )
+
+        self.assertEqual(3, completed.returncode)
+        result = self.output(completed)
+        self.assertEqual("SHARED_CHECKOUT_REQUIRED", result["outcome"])
+        self.assertEqual("PRIMARY_REQUIRED", result["legacy_outcome"])
 
     def test_exact_files_do_not_use_ancestry_overlap(self) -> None:
         first = self.claim(*self.acquire_arguments("first"), "--file", "future")
@@ -197,7 +250,7 @@ class AgentClaimTests(unittest.TestCase):
 
         self.assertEqual(0, first.returncode, first.stderr)
         self.assertEqual(0, second.returncode, second.stderr)
-        self.assertEqual("ISOLATE", self.output(second)["outcome"])
+        self.assertEqual("ISOLATED_CHECKOUT_ACQUIRED", self.output(second)["outcome"])
 
     def test_tree_and_all_files_scopes_overlap_descendants(self) -> None:
         tree = self.claim(
@@ -218,7 +271,7 @@ class AgentClaimTests(unittest.TestCase):
         self.assertEqual(0, tree.returncode, tree.stderr)
         self.assertEqual(3, nested.returncode)
         nested_result = self.output(nested)
-        self.assertEqual("WAIT", nested_result["outcome"])
+        self.assertEqual("CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED", nested_result["outcome"])
         self.assertEqual("tree", nested_result["overlaps"][0]["claimed_kind"])
         self.assertFalse(blocked_path.exists())
 
@@ -294,9 +347,14 @@ class AgentClaimTests(unittest.TestCase):
         blocked_project = self.claim(*self.acquire_arguments("blocked"), "--file", "src/one.py")
         backlog = self.claim(*self.acquire_arguments("backlog"), "--backlog")
         self.assertEqual(3, blocked_project.returncode)
-        self.assertEqual("WAIT", self.output(blocked_project)["outcome"])
+        self.assertEqual(
+            "CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED",
+            self.output(blocked_project)["outcome"],
+        )
         self.assertEqual(3, backlog.returncode)
-        self.assertEqual("PRIMARY_REQUIRED", self.output(backlog)["outcome"])
+        backlog_result = self.output(backlog)
+        self.assertEqual("SHARED_CHECKOUT_RELEASE_REQUIRED", backlog_result["outcome"])
+        self.assertEqual("PRIMARY_REQUIRED", backlog_result["legacy_outcome"])
         self.assertEqual(["project"], [claim["claim_id"] for claim in self.output(self.claim("status"))["claims"]])
 
     def test_unchanged_out_of_domain_dirtiness_is_not_owned_but_changes_block_release(self) -> None:
@@ -308,7 +366,7 @@ class AgentClaimTests(unittest.TestCase):
             "project implementation",
         )
         self.assertEqual(0, acquired.returncode, acquired.stderr)
-        self.assertEqual("PRIMARY", self.output(acquired)["outcome"])
+        self.assertEqual("SHARED_CHECKOUT_ACQUIRED", self.output(acquired)["outcome"])
 
         (self.repository / "README.md").write_text("implemented\n", encoding="utf-8")
         self.git("add", "README.md")
@@ -582,7 +640,10 @@ class AgentClaimTests(unittest.TestCase):
         blocked = self.claim("extend", "--claim-id", "second", "--file", "README.md")
 
         self.assertEqual(3, blocked.returncode)
-        self.assertEqual("WAIT", self.output(blocked)["outcome"])
+        self.assertEqual(
+            "CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED",
+            self.output(blocked)["outcome"],
+        )
         self.assertEqual(before, self.registry_path().read_bytes())
 
     def test_simultaneous_extensions_cannot_both_acquire_same_file(self) -> None:
@@ -601,7 +662,7 @@ class AgentClaimTests(unittest.TestCase):
 
         self.assertEqual([0, 3], sorted(code for _stdout, _stderr, code in completed))
         self.assertEqual(
-            {"EXTENDED", "WAIT"},
+            {"CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED", "EXTENDED"},
             {json.loads(stdout)["outcome"] for stdout, _stderr, _code in completed},
         )
 
@@ -684,6 +745,7 @@ class AgentClaimTests(unittest.TestCase):
 
         self.assertEqual(0, released.returncode, released.stderr)
         events = self.journal_events()
+        self.assertTrue(all(event["schema_version"] == 1 for event in events))
         self.assertEqual(["PRIMARY", "HEARTBEAT", "RELEASED"], [event["outcome"] for event in events])
         self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), events[-1]["resulting_commit"])
 
@@ -710,7 +772,9 @@ class AgentClaimTests(unittest.TestCase):
         released = self.claim("release", "--claim-id", "recovery")
 
         self.assertEqual(0, acquired.returncode, acquired.stderr)
-        self.assertEqual("RECOVER", self.output(acquired)["outcome"])
+        result = self.output(acquired)
+        self.assertEqual("DIRTY_CHECKOUT_RECOVERY_ACQUIRED", result["outcome"])
+        self.assertEqual("RECOVER", result["legacy_outcome"])
         self.assertEqual(1, rejected.returncode)
         self.assertEqual(0, released.returncode, released.stderr)
 
@@ -897,12 +961,15 @@ class AgentClaimTests(unittest.TestCase):
 
         self.assertEqual(0, completed.returncode, completed.stderr)
         report = json.loads(completed.stdout)
+        self.assertEqual(2, report["schema_version"])
         metrics = report["metrics"]
         self.assertEqual(
             {"primary": 1, "isolated": 1, "recovery": 1},
             metrics["successful_acquisitions"],
         )
         self.assertEqual(2, metrics["wait_attempt_count"])
+        self.assertEqual(2, metrics["outcome_counts"]["CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED"])
+        self.assertEqual(2, metrics["raw_outcome_counts"]["WAIT"])
         self.assertEqual(1, len(metrics["wait_episodes"]))
         self.assertEqual(300.0, metrics["wait_episodes"][0]["duration_seconds"])
         self.assertEqual("src/one.py", metrics["top_contention"]["exact_files"][0]["scope"])
