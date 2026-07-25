@@ -116,10 +116,12 @@ def _canonical_worktree(repository: Path, claim_id: str) -> Path:
 
 
 def _claim_owns_primary_worktree(claim: dict[str, Any], primary_worktree: Path) -> bool:
-    if claim.get("mode") in {"primary", "recovery"}:
-        return True
+    if _scope_is_resource_only(_claim_scope(claim)):
+        return False
     worktree = claim.get("worktree")
-    return isinstance(worktree, str) and Path(worktree).resolve() == primary_worktree
+    if isinstance(worktree, str):
+        return Path(worktree).resolve() == primary_worktree
+    return claim.get("mode") in {"primary", "recovery"}
 
 
 def _shared_checkout_is_claimed(repository: Path, claims: Sequence[dict[str, Any]]) -> bool:
@@ -293,9 +295,13 @@ def _status_paths(entries: Sequence[dict[str, str]]) -> list[str]:
 def _status_for_domain(
     snapshot: dict[str, dict[str, str]],
     file_domain: str,
+    *,
+    resource_only: bool = False,
 ) -> list[dict[str, str]]:
-    if file_domain in {"all_files", "none"}:
+    if file_domain == "all_files" or (file_domain == "none" and not resource_only):
         return _status_entries({**snapshot["project_files"], **snapshot["backlog"]})
+    if file_domain == "none":
+        return []
     if file_domain in snapshot:
         return _status_entries(snapshot[file_domain])
     return []
@@ -679,6 +685,10 @@ def _scope_file_domain(scope: dict[str, Any]) -> str:
     if len(domains) == 1:
         return next(iter(domains))
     return "legacy_mixed" if domains else "none"
+
+
+def _scope_is_resource_only(scope: dict[str, Any]) -> bool:
+    return _scope_file_domain(scope) == "none" and bool(scope.get("resources"))
 
 
 def _overlap_details(requested: dict[str, Any], claimed: dict[str, Any]) -> list[dict[str, str]]:
@@ -1176,7 +1186,13 @@ def _acquire(args: argparse.Namespace) -> int:
                     active_claim_count=len(claims),
                 )
 
-        if claims and not requires_primary:
+        file_claims = [
+            claim
+            for claim in claims
+            if not _scope_is_resource_only(_claim_scope(claim))
+        ]
+        requested_uses_writer_lane = not _scope_is_resource_only(requested_scope)
+        if file_claims and requested_uses_writer_lane and not requires_primary:
             worktree_root = _canonical_worktree_root(repository)
             target_worktree = _canonical_worktree(repository, args.claim_id)
             if not args.branch:
@@ -1229,7 +1245,11 @@ def _acquire(args: argparse.Namespace) -> int:
         else:
             target_worktree = repository
             initial_snapshot = _status_snapshot(target_worktree)
-            initial_status = _status_for_domain(initial_snapshot, requested_scope["file_domain"])
+            initial_status = _status_for_domain(
+                initial_snapshot,
+                requested_scope["file_domain"],
+                resource_only=_scope_is_resource_only(requested_scope),
+            )
             if initial_status and not args.allow_recovery:
                 event = _event(
                     "acquire",
@@ -1257,7 +1277,11 @@ def _acquire(args: argparse.Namespace) -> int:
             "backlog": requested_scope["backlog"],
             "all_files": requested_scope["all_files"],
             "baseline_commit": _head(target_worktree),
-            "baseline_status": _status_for_domain(baseline_snapshot, requested_scope["file_domain"]),
+            "baseline_status": _status_for_domain(
+                baseline_snapshot,
+                requested_scope["file_domain"],
+                resource_only=_scope_is_resource_only(requested_scope),
+            ),
             "baseline_out_of_domain_status": _status_outside_domain(
                 baseline_snapshot,
                 requested_scope["file_domain"],
@@ -1359,6 +1383,30 @@ def _extend(args: argparse.Namespace) -> int:
                 already_owned_scope=already_owned,
             )
 
+        primary_worktree = _primary_worktree(repository)
+        claim_worktree = Path(claim["worktree"]).resolve()
+        primary_file_writer_exists = any(
+            other.get("claim_id") != args.claim_id
+            and _claim_owns_primary_worktree(other, primary_worktree)
+            for other in claims
+        )
+        if (
+            _scope_file_domain(added) != "none"
+            and claim_worktree == primary_worktree
+            and primary_file_writer_exists
+        ):
+            return _primary_required_result(
+                common_directory,
+                "extend",
+                args,
+                requested_scope,
+                scope_warnings,
+                claim=claim,
+                shared_checkout_claimed=True,
+                added_scope=added,
+                already_owned_scope=already_owned,
+            )
+
         if claim.get("mode") == "isolated" and _scope_requires_primary_worktree(added):
             return _primary_required_result(
                 common_directory,
@@ -1438,6 +1486,10 @@ def _release(args: argparse.Namespace) -> int:
             owned_status = _status_for_domain(
                 current_snapshot,
                 "all_files" if complete_worktree_release else file_domain,
+                resource_only=(
+                    not complete_worktree_release
+                    and _scope_is_resource_only(_claim_scope(claim))
+                ),
             )
             if owned_status:
                 event = _event(
@@ -1456,7 +1508,7 @@ def _release(args: argparse.Namespace) -> int:
                     dirty_status=owned_status,
                     compatibility=compatibility,
                 )
-            if not complete_worktree_release:
+            if not complete_worktree_release and not _scope_is_resource_only(_claim_scope(claim)):
                 outside_status = _status_outside_domain(current_snapshot, file_domain)
                 baseline_outside_status = sorted(
                     claim.get("baseline_out_of_domain_status", []),
