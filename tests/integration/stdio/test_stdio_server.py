@@ -38,6 +38,7 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
         tools = await client.list_tools()
         names = {tool.name for tool in tools}
         assert "skill_list" in names
+        assert "skill_find" in names
         assert "skill_load" in names
         assert "skill_refresh" in names
         acquire = next(tool for tool in tools if tool.name == "claim_acquire")

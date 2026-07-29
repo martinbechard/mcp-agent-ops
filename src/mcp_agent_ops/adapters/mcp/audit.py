@@ -241,6 +241,8 @@ def _safe_outcome(tool: str, result: ToolResult) -> str | None:
         if isinstance(skills, list):
             return "CATALOG" if skills else "EMPTY"
         return None
+    if tool == "skill_find":
+        return "FOUND" if isinstance(structured.get("path"), str) else None
     if tool == "skill_validate":
         ok = structured.get("ok")
         return "VALID" if ok is True else "FINDINGS" if ok is False else None

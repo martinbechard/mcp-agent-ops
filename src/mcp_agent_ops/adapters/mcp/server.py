@@ -19,6 +19,7 @@ from mcp_agent_ops.claims.service import ClaimCommandResult, run_claim_command
 from mcp_agent_ops.skill_catalog.catalog import SkillCatalog
 from mcp_agent_ops.skill_catalog.models import (
     BatchLoadedSkill,
+    FoundSkill,
     LoadedSkillResource,
     PublishedSkillCatalog,
     SkillLoadResult,
@@ -43,6 +44,7 @@ AUDITED_TOOL_NAMES = frozenset({
     "claim_report",
     "claim_status",
     "detect_technology_skills",
+    "skill_find",
     "skill_list",
     "skill_load",
     "skill_read",
@@ -302,6 +304,12 @@ def create_server(
     def skill_path(value: str) -> Path:
         return resolve_within_roots(catalog_roots, value, "skill")
 
+    def skill_validation_path(value: str) -> Path:
+        """Resolve absolute paths safely and all other values as catalog skill names."""
+        if Path(value).expanduser().is_absolute():
+            return skill_path(value)
+        return Path(catalog().find_skill(value).path)
+
     def detection_catalog() -> dict[str, object]:
         nonlocal detection_snapshot
         if registry is None:
@@ -502,6 +510,23 @@ def create_server(
         return catalog().public_result()
 
     @mcp.tool
+    def skill_find(name: str) -> FoundSkill:
+        """Return the precedence-resolved absolute `SKILL.md` path for one skill name.
+
+        Args:
+            name: Exact frontmatter name in the current catalog snapshot.
+
+        Returns:
+            The requested name and selected project-overlay or configured-root path.
+
+        Raises:
+            SkillNotFoundError: If no configured skill has the requested name.
+
+        The operation is read-only and does not rescan roots until `skill_refresh`.
+        """
+        return catalog().find_skill(name)
+
+    @mcp.tool
     def skill_read(name: str) -> BatchLoadedSkill:
         """Read one complete precedence-resolved skill without host filesystem paths."""
         return catalog().read_model_skill(name)
@@ -530,9 +555,21 @@ def create_server(
 
     @mcp.tool
     def skill_validate(paths: list[str]) -> SkillValidationResult:
-        """Validate Agent Skill roots, directories, or exact `SKILL.md` files."""
+        """Validate catalog skill names, skill roots, directories, or exact `SKILL.md` files.
+
+        Args:
+            paths: One or more catalog names or absolute paths within configured skill roots.
+                Names use the same precedence-selected snapshot as `skill_find`.
+
+        Returns:
+            A read-only validation result containing safe root-relative findings.
+
+        Raises:
+            ValueError: If no inputs are supplied, a name is unknown, or a path escapes
+                the configured skill roots.
+        """
         return validate_skills(
-            [skill_path(path) for path in paths],
+            [skill_validation_path(path) for path in paths],
             allowed_roots=catalog_roots,
         )
 

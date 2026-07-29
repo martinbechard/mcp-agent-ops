@@ -48,6 +48,18 @@ class PublishedSkillCatalog(BaseModel):
     skills: list[PublishedSkillEntry]
 
 
+class FoundSkill(BaseModel):
+    """Identify one catalog name and its precedence-selected absolute manifest path.
+
+    Callers may pass ``path`` to filesystem-oriented operations such as skill validation.
+    The result always identifies the immutable catalog snapshot's selected definition,
+    never one of its lower-precedence shadowed definitions.
+    """
+
+    name: str
+    path: str
+
+
 class LoadedSkill(BaseModel):
     """Return one complete skill document together with its catalog metadata."""
 

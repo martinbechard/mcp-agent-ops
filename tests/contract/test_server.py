@@ -72,6 +72,7 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
             "verify_yaml",
             "verify_markdown_links",
             "skill_list",
+            "skill_find",
             "skill_read",
             "skill_read_resource",
             "skill_load",
@@ -310,11 +311,32 @@ async def test_server_overlays_nested_project_skills_from_working_directory(
 
     async with Client(server) as client:
         catalog = await client.call_tool("skill_list", {})
+        found = await client.call_tool("skill_find", {"name": "example"})
         loaded = await client.call_tool("skill_read", {"name": "example"})
+        validation = await client.call_tool("skill_validate", {"paths": ["example"]})
 
     assert catalog.structured_content["skills"][0]["description"] == "Project example skill."
     assert catalog.structured_content["skills"][0]["shadowed_count"] == 2
+    assert found.structured_content == {
+        "name": "example",
+        "path": str((project_skill / "SKILL.md").resolve()),
+    }
     assert loaded.structured_content["content"].endswith("# Project\n")
+    assert validation.structured_content == {"ok": True, "findings": []}
+
+
+async def test_server_rejects_unknown_skill_name_during_find_and_validation(
+    tmp_path: Path,
+) -> None:
+    skills = tmp_path / "skills"
+    _write_skill(skills)
+    server = create_server([skills])
+
+    async with Client(server) as client:
+        with pytest.raises(ToolError, match="missing"):
+            await client.call_tool("skill_find", {"name": "missing"})
+        with pytest.raises(ToolError, match="missing"):
+            await client.call_tool("skill_validate", {"paths": ["missing"]})
 
 
 def test_server_rejects_project_skill_root_symlink_escape(tmp_path: Path) -> None:
@@ -871,6 +893,7 @@ async def test_shared_audit_records_bounded_skill_load_outcomes(tmp_path: Path) 
     )
 
     async with Client(server) as client:
+        await client.call_tool("skill_find", {"name": "example"})
         await client.call_tool("skill_load", {"names": ["example"]})
         await client.call_tool("skill_load", {"names": ["missing"]})
         await client.call_tool(
@@ -899,6 +922,7 @@ async def test_shared_audit_records_bounded_skill_load_outcomes(tmp_path: Path) 
         if record["status"] == "completed"
     ]
     assert completed == [
+        ("skill_find", "FOUND"),
         ("skill_load", "LOADED"),
         ("skill_load", "REJECTED"),
         ("skill_resource_load", "LOADED"),
@@ -906,6 +930,7 @@ async def test_shared_audit_records_bounded_skill_load_outcomes(tmp_path: Path) 
     ]
     assert "supporting guide" not in audit
     assert "references/guide.md" not in audit
+    assert str(skills) not in audit
     assert '"missing"' not in audit
 
 

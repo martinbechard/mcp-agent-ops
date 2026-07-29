@@ -18,6 +18,7 @@ import yaml
 
 from mcp_agent_ops.skill_catalog.models import (
     BatchLoadedSkill,
+    FoundSkill,
     LoadedSkill,
     LoadedSkillResource,
     PublishedSkillCatalog,
@@ -243,6 +244,24 @@ class SkillCatalog:
             return self._entries[name].model_copy(deep=True)
         except KeyError as error:
             raise SkillNotFoundError(name) from error
+
+    def find_skill(self, name: str) -> FoundSkill:
+        """Return the manifest path selected by catalog precedence for one skill name.
+
+        Args:
+            name: Exact frontmatter name of a skill in the immutable catalog snapshot.
+
+        Returns:
+            The requested name and absolute path to its selected ``SKILL.md``.
+
+        Raises:
+            SkillNotFoundError: If the skill is absent from every configured root.
+
+        This read-only lookup uses the same project-overlay and configured-root resolution
+        already captured by the catalog snapshot.
+        """
+        entry = self.get(name)
+        return FoundSkill(name=entry.name, path=entry.path)
 
     def read_skill(self, name: str) -> LoadedSkill:
         """Return one complete selected `SKILL.md` document from this snapshot."""

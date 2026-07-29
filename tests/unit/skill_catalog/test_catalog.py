@@ -45,6 +45,18 @@ def test_catalog_uses_root_precedence_and_reports_shadowed_skills(tmp_path: Path
     assert "shadowed_paths" not in published.skills[0].model_dump()
 
 
+def test_catalog_finds_precedence_resolved_skill_path(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first_skill = write_skill(first, "python", "python", "First Python skill.")
+    write_skill(second, "python", "python", "Second Python skill.")
+
+    found = SkillCatalog.from_roots([first, second]).find_skill("python")
+
+    assert found.name == "python"
+    assert found.path == str((first_skill / "SKILL.md").resolve())
+
+
 def test_catalog_recursively_discovers_nested_skills_in_selected_roots(tmp_path: Path) -> None:
     root = tmp_path / "project" / ".agents" / "skills"
     skill = write_skill(
