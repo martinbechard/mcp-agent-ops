@@ -16,11 +16,21 @@ The claim engine, technology detector, and Agent Skill validator began as copies
 
 See `docs/reference/mcp-tools.md` for the complete small-call tool and resource surface.
 
+## Supported platforms
+
+The stdio server, direct claim CLI, repository locking, skill catalog, verification, and technology detection run natively on:
+
+- macOS with Python 3.11, 3.12, or 3.13;
+- Linux with Python 3.11, 3.12, or 3.13; and
+- Windows with Python 3.11, 3.12, or 3.13 in releases newer than `v0.4.0`.
+
+Published release `v0.4.0` predates native Windows claim locking. macOS and Linux remain supported by every published release. The optional shared multi-process evaluation audit uses POSIX file locking and remains limited to macOS and Linux; this does not affect ordinary MCP or claim operation on Windows.
+
 ## Install the latest release
 
 The supported distribution is the wheel attached to the [latest GitHub Release](https://github.com/martinbechard/mcp-agent-ops/releases/latest). Do not install the generated source archive when only the runtime server is needed; the wheel excludes tests, documentation, and development dependencies.
 
-On Windows, open PowerShell and install `uv` plus the GitHub CLI:
+On Windows, first confirm that the latest release is newer than `v0.4.0`. Then open PowerShell and install `uv` plus the GitHub CLI:
 
 ```powershell
 winget install --id astral-sh.uv -e
@@ -140,6 +150,30 @@ When the server starts with its working directory beneath a configured workspace
 Repository, project, verification, worktree, and validation paths supplied through tools must be absolute and resolve beneath their configured boundary. Catalog discovery, skill validation, and technology detection recheck every nested manifest, metadata file, source file, and supporting resource before reading it. The server rejects missing boundary configuration, traversal, and symlink escape rather than granting ambient filesystem access.
 
 The skill catalog is built lazily and reused for the life of the server process. `skill_refresh` atomically publishes a new catalog snapshot after installed skills change. Technology registry configuration is also cached and takes effect after restarting the server. Claim state remains disk-authoritative and coordinates across server processes.
+
+### Junie on macOS
+
+Junie reads MCP configuration from `~/.junie/mcp/mcp.json` for user scope or `.junie/mcp/mcp.json` beneath one project. In the IDE, open **Settings | Tools | Junie | MCP Settings**.
+
+Use the absolute executable directory reported by `uv tool dir --bin`. Replace `YOUR_NAME` and the workspace path with existing absolute paths:
+
+```json
+{
+  "mcpServers": {
+    "mcp-agent-ops": {
+      "command": "/Users/YOUR_NAME/.local/bin/mcp-agent-ops",
+      "args": [],
+      "env": {
+        "MCP_AGENT_OPS_SKILL_ROOTS": "/Users/YOUR_NAME/.agents/skills:/Users/YOUR_NAME/.codex/skills",
+        "MCP_AGENT_OPS_DETECTION_REGISTRY": "/Users/YOUR_NAME/.agents/skills/detect-technology-skills/references/technology-skill-detection-registry.yaml",
+        "MCP_AGENT_OPS_WORKSPACE_ROOTS": "/Users/YOUR_NAME/dev"
+      }
+    }
+  }
+}
+```
+
+macOS and Linux path lists use colons. On Linux, use the same configuration with Linux paths such as `/home/YOUR_NAME`.
 
 ### Junie on Windows
 
