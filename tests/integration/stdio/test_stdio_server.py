@@ -22,6 +22,7 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
     (skill / "SKILL.md").write_text(
         "---\nname: example\ndescription: Stdio example.\n---\n\n# Example\n",
         encoding="utf-8",
+        newline="",
     )
     environment = os.environ.copy()
     environment["MCP_AGENT_OPS_SKILL_ROOTS"] = str(tmp_path / "skills")
@@ -52,6 +53,7 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
         (skill / "SKILL.md").write_text(
             "---\nname: example\ndescription: Stdio example.\n---\n\n# Changed\n",
             encoding="utf-8",
+            newline="",
         )
         unchanged = await client.call_tool("skill_load", {"names": ["example"]})
         assert unchanged.structured_content == first.structured_content
