@@ -7,26 +7,41 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 import re
 import secrets
 import stat
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, cast
 
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools.base import ToolResult
 from mcp.types import CallToolRequestParams
 
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - shared evaluation audit is POSIX-only.
-    fcntl = None  # type: ignore[assignment]
+_fcntl = importlib.import_module("fcntl") if os.name == "posix" else None
+
+
+def _effective_user_id() -> int:
+    """Return the POSIX effective user identifier required by shared audit ownership checks."""
+    getter = getattr(os, "geteuid", None)
+    if not callable(getter):
+        raise ValueError("Shared MCP audit logging requires POSIX user ownership.")
+    return int(getter())
+
+
+def _lock_stream(stream: BinaryIO, operation_name: str) -> None:
+    """Apply one named POSIX advisory-lock operation to an open audit stream."""
+    if _fcntl is None:
+        raise ValueError("Shared MCP audit logging requires POSIX file locking.")
+    operation = cast(int, getattr(_fcntl, operation_name))
+    flock = cast(Callable[[int, int], None], vars(_fcntl)["flock"])
+    flock(stream.fileno(), operation)
 
 
 def _digest(value: object) -> str:
@@ -84,7 +99,7 @@ class ToolAuditLog:
         self._sequence = 0
         if not path.parent.is_dir():
             raise ValueError("Configured MCP audit log parent does not exist.")
-        if shared and fcntl is None:
+        if shared and _fcntl is None:
             raise ValueError("Shared MCP audit logging requires POSIX file locking.")
         flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
         if not shared:
@@ -104,7 +119,7 @@ class ToolAuditLog:
             if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
                 raise ValueError("Configured MCP audit log must be a new regular file.")
             if shared and (
-                metadata.st_uid != os.geteuid()
+                metadata.st_uid != _effective_user_id()
                 or stat.S_IMODE(metadata.st_mode) & 0o077
             ):
                 raise ValueError(
@@ -165,8 +180,7 @@ class ToolAuditLog:
             json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
         ).encode("utf-8")
         if self.shared:
-            assert fcntl is not None
-            fcntl.flock(self._stream.fileno(), fcntl.LOCK_EX)
+            _lock_stream(self._stream, "LOCK_EX")
         try:
             remaining = memoryview(encoded)
             while remaining:
@@ -177,8 +191,7 @@ class ToolAuditLog:
             os.fsync(self._stream.fileno())
         finally:
             if self.shared:
-                assert fcntl is not None
-                fcntl.flock(self._stream.fileno(), fcntl.LOCK_UN)
+                _lock_stream(self._stream, "LOCK_UN")
 
 
 class ToolAuditMiddleware(Middleware):
