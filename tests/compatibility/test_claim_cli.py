@@ -637,6 +637,7 @@ class AgentClaimTests(unittest.TestCase):
         self.assertEqual("out_of_domain_commit", result["reason"])
         self.assertEqual(["backlog/item.md"], result["out_of_domain_paths"])
 
+    @unittest.skipIf(os.name == "nt", "Windows filenames cannot contain newlines or quotes.")
     def test_nul_git_paths_remain_in_the_backlog_domain(self) -> None:
         changed_path = self.repository / "backlog" / 'odd\n" café -> name.md'
         unchanged_path = self.repository / "backlog" / "unchanged\nitem.md"
@@ -659,6 +660,7 @@ class AgentClaimTests(unittest.TestCase):
             self.output(released)["out_of_domain_paths"],
         )
 
+    @unittest.skipIf(os.name == "nt", "Windows filenames cannot contain newlines or quotes.")
     def test_committed_path_scan_is_nul_safe(self) -> None:
         acquired = self.claim(
             *self.acquire_arguments("project"),
