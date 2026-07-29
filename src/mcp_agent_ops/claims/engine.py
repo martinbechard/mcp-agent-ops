@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import gzip
 import hashlib
 import json
@@ -22,8 +21,10 @@ from contextvars import ContextVar
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
-from typing import Any, Iterator, Sequence
+from typing import IO, Any, Iterator, Sequence
 from uuid import uuid4
+
+from mcp_agent_ops.claims.locking import exclusive_text_file
 
 
 SUCCESS = 0
@@ -37,7 +38,6 @@ WORKTREE_IGNORE_PATTERN = "/.worktrees/"
 ISOLATED_SPARSE_CHECKOUT_PATTERNS = ("/*", "!/backlog/")
 PRIMARY_WORKTREE_RESOURCES = frozenset({"git-index:primary", "merge:integration:main"})
 REGISTRY_FILE_NAME = "agent-claims.json"
-LOCK_FILE_NAME = "agent-claims.lock"
 EVENT_DIRECTORY_NAME = "agent-claim-events"
 EVENT_SCHEMA_VERSION = 1
 RESULT_SCHEMA_VERSION = 2
@@ -148,9 +148,9 @@ def _claim_id_is_safe_worktree_component(claim_id: str) -> bool:
     return bool(WORKTREE_COMPONENT_PATTERN.fullmatch(claim_id))
 
 
-def _registry_paths(repository: Path) -> tuple[Path, Path]:
+def _registry_path(repository: Path) -> Path:
     common_directory = _git_common_directory(repository)
-    return common_directory / REGISTRY_FILE_NAME, common_directory / LOCK_FILE_NAME
+    return common_directory / REGISTRY_FILE_NAME
 
 
 def _journal_paths(common_directory: Path) -> tuple[Path, Path, Path, Path]:
@@ -159,39 +159,46 @@ def _journal_paths(common_directory: Path) -> tuple[Path, Path, Path, Path]:
 
 
 @contextmanager
-def _locked_registry(repository: Path) -> Iterator[tuple[Path, dict[str, Any]]]:
-    registry_path, lock_path = _registry_paths(repository)
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+", encoding="utf-8") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        try:
-            if registry_path.exists():
-                data = json.loads(registry_path.read_text(encoding="utf-8"))
-            else:
-                data = {"claims": []}
-            if not isinstance(data.get("claims"), list):
-                raise ValueError(f"Invalid claim registry: {registry_path}")
-            yield registry_path, data
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+def _locked_registry(repository: Path) -> Iterator[tuple[Path, dict[str, Any], IO[str]]]:
+    registry_path = _registry_path(repository)
+    with exclusive_text_file(registry_path) as registry_file:
+        registry_file.seek(0)
+        raw_registry = registry_file.read()
+        data = json.loads(raw_registry) if raw_registry else {"claims": []}
+        if not isinstance(data.get("claims"), list):
+            raise ValueError(f"Invalid claim registry: {registry_path}")
+        yield registry_path, data, registry_file
+
+
+@contextmanager
+def _read_locked_registry(repository: Path) -> Iterator[tuple[Path, dict[str, Any]]]:
+    registry_path = _registry_path(repository)
+    if not registry_path.exists():
+        yield registry_path, {"claims": []}
+        return
+    with exclusive_text_file(registry_path) as registry_file:
+        registry_file.seek(0)
+        raw_registry = registry_file.read()
+        data = json.loads(raw_registry) if raw_registry else {"claims": []}
+        if not isinstance(data.get("claims"), list):
+            raise ValueError(f"Invalid claim registry: {registry_path}")
+        yield registry_path, data
 
 
 @contextmanager
 def _maintenance_lock(common_directory: Path) -> Iterator[None]:
     root, _hot, _archive, _journal = _journal_paths(common_directory)
     root.mkdir(parents=True, exist_ok=True)
-    with (root / "maintenance.lock").open("a+", encoding="utf-8") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    with exclusive_text_file(root / "maintenance.lock"):
+        yield
 
 
-def _write_registry(path: Path, data: dict[str, Any]) -> None:
-    temporary_path = path.with_suffix(".tmp")
-    temporary_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(temporary_path, path)
+def _write_registry(registry_file: IO[str], data: dict[str, Any]) -> None:
+    registry_file.seek(0)
+    registry_file.write(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    registry_file.truncate()
+    registry_file.flush()
+    os.fsync(registry_file.fileno())
 
 
 def _now() -> datetime:
@@ -1134,15 +1141,15 @@ def _worktree_root_not_ignored_result(
 
 def _acquire(args: argparse.Namespace) -> int:
     repository = _repository_root(Path(args.repo).resolve())
-    with _locked_registry(repository) as (registry_path, data):
-        common_directory = registry_path.parent
-        try:
-            requested_scope, scope_warnings = _scope_from_args(args, repository)
-        except _ScopeError as error:
-            return _invalid_scope_result(common_directory, "acquire", args, error)
-        if not _claim_id_is_safe_worktree_component(args.claim_id):
-            return _invalid_identifier_result(common_directory, args)
+    common_directory = _git_common_directory(repository)
+    try:
+        requested_scope, scope_warnings = _scope_from_args(args, repository)
+    except _ScopeError as error:
+        return _invalid_scope_result(common_directory, "acquire", args, error)
+    if not _claim_id_is_safe_worktree_component(args.claim_id):
+        return _invalid_identifier_result(common_directory, args)
 
+    with _locked_registry(repository) as (registry_path, data, registry_file):
         claims: list[dict[str, Any]] = data["claims"]
         if any(claim.get("claim_id") == args.claim_id for claim in claims):
             event = _event("acquire", "CLAIM_ID_EXISTS", args, requested_scope=requested_scope)
@@ -1307,7 +1314,7 @@ def _acquire(args: argparse.Namespace) -> int:
             "worktree": str(target_worktree),
         }
         claims.append(claim)
-        _write_registry(registry_path, data)
+        _write_registry(registry_file, data)
         event = _event(
             "acquire",
             outcome,
@@ -1329,7 +1336,7 @@ def _acquire(args: argparse.Namespace) -> int:
 
 def _extend(args: argparse.Namespace) -> int:
     repository = _repository_root(Path(args.repo).resolve())
-    with _locked_registry(repository) as (registry_path, data):
+    with _locked_registry(repository) as (registry_path, data, registry_file):
         common_directory = registry_path.parent
         try:
             requested_scope, scope_warnings = _scope_from_args(args, repository)
@@ -1422,7 +1429,7 @@ def _extend(args: argparse.Namespace) -> int:
 
         if _scope_has_values(added):
             _apply_scope(claim, added)
-            _write_registry(registry_path, data)
+            _write_registry(registry_file, data)
         event = _event(
             "extend",
             "EXTENDED",
@@ -1446,12 +1453,12 @@ def _extend(args: argparse.Namespace) -> int:
 
 def _heartbeat(args: argparse.Namespace) -> int:
     repository = _repository_root(Path(args.repo).resolve())
-    with _locked_registry(repository) as (registry_path, data):
+    with _locked_registry(repository) as (registry_path, data, registry_file):
         common_directory = registry_path.parent
         for claim in data["claims"]:
             if claim.get("claim_id") == args.claim_id:
                 claim["heartbeat"] = _timestamp()
-                _write_registry(registry_path, data)
+                _write_registry(registry_file, data)
                 event = _event("heartbeat", "HEARTBEAT", args, claim=claim)
                 return _journaled_result(SUCCESS, common_directory, event, claim=claim)
         event = _event("heartbeat", "CLAIM_NOT_FOUND", args)
@@ -1460,7 +1467,7 @@ def _heartbeat(args: argparse.Namespace) -> int:
 
 def _release(args: argparse.Namespace) -> int:
     repository = _repository_root(Path(args.repo).resolve())
-    with _locked_registry(repository) as (registry_path, data):
+    with _locked_registry(repository) as (registry_path, data, registry_file):
         common_directory = registry_path.parent
         claims: list[dict[str, Any]] = data["claims"]
         for index, claim in enumerate(claims):
@@ -1598,7 +1605,7 @@ def _release(args: argparse.Namespace) -> int:
                 )
                 return _journaled_result(ERROR, common_directory, event, reason="missing_commit_or_no_change")
             released = claims.pop(index)
-            _write_registry(registry_path, data)
+            _write_registry(registry_file, data)
             event = _event(
                 "release",
                 "RELEASED",
@@ -1614,7 +1621,7 @@ def _release(args: argparse.Namespace) -> int:
 
 def _status_command(args: argparse.Namespace) -> int:
     repository = _repository_root(Path(args.repo).resolve())
-    with _locked_registry(repository) as (registry_path, data):
+    with _read_locked_registry(repository) as (registry_path, data):
         _print_result(
             "STATUS",
             registry=str(registry_path),
@@ -1993,7 +2000,7 @@ def _report(args: argparse.Namespace) -> int:
     start = end - delta
     events, coverage_gaps = _load_events(common_directory)
     filtered = [event for event in events if start <= _parse_timestamp(str(event["timestamp"])) <= end]
-    with _locked_registry(repository) as (_registry_path, data):
+    with _read_locked_registry(repository) as (_registry_path, data):
         live_claims = [dict(claim) for claim in data["claims"]]
     acquired_claim_ids = {
         str(event.get("claim_id"))

@@ -8,7 +8,8 @@
 - Require model-supplied workspace and skill paths to be absolute and contained after symlink resolution.
 - Recheck every nested skill manifest, adapter metadata file, technology source, owner manifest, owner-evidence file, and resource at its read boundary.
 - Reject nested paths that escape their configured roots through symlinks and omit configured host paths from model-facing diagnostics.
-- Preserve atomic claim registry writes and operating-system file locking.
+- Preserve atomic in-place claim registry writes under an exclusive operating-system lock applied directly to the stable registry file.
+- Support claim coordination and ordinary stdio MCP operation on POSIX and Windows without a compatibility subsystem.
 - Keep broad claim-domain selection explicit and mutually exclusive; never infer all-files from a repository root argument.
 - Derive isolated checkout locations beneath the primary worktree, require the operational root to be ignored, and configure sparse checkout before populating files.
 - Persist the selected file domain plus out-of-domain baseline evidence so release cannot absorb or silently overlook another domain's changes.

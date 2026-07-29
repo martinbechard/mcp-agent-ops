@@ -37,6 +37,7 @@
 - Simultaneous claim processes cannot both acquire primary ownership.
 - Overlapping concurrent claims produce one safe owner and one wait outcome.
 - A real stdio subprocess initializes, advertises broad claim-domain schemas, lists tools and resources, preserves a catalog snapshot until explicit refresh, and shuts down cleanly.
+- Windows CI runs the complete claim compatibility suite plus a real stdio subprocess; evaluator-only shared audit remains on its documented POSIX boundary.
 
 ## Release gates
 

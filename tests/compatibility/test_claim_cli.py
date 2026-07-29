@@ -107,6 +107,30 @@ class AgentClaimTests(unittest.TestCase):
         """Return the repository-global live registry path."""
         return self.common_directory() / "agent-claims.json"
 
+    def test_claim_update_preserves_registry_file_identity(self) -> None:
+        """Keep the repository-global lock attached to one stable registry file."""
+        registry_path = self.registry_path()
+        registry_path.write_text('{"claims": []}\n', encoding="utf-8")
+        initial_identity = registry_path.stat().st_ino
+
+        completed = self.claim(
+            "acquire",
+            "--claim-id",
+            "stable-registry",
+            "--agent",
+            "test-agent",
+            "--task",
+            "preserve registry identity",
+            "--root-task-id",
+            "stable-registry",
+            "--project-files",
+            "--scope-reason",
+            "verify repository-global registry locking",
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual(initial_identity, registry_path.stat().st_ino)
+
     def hot_directory(self) -> Path:
         """Return the repository-global hot journal directory."""
         return self.common_directory() / "agent-claim-events" / "hot"

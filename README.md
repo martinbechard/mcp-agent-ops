@@ -20,6 +20,55 @@ See `docs/reference/mcp-tools.md` for the complete small-call tool and resource 
 
 The supported distribution is the wheel attached to the [latest GitHub Release](https://github.com/martinbechard/mcp-agent-ops/releases/latest). Do not install the generated source archive when only the runtime server is needed; the wheel excludes tests, documentation, and development dependencies.
 
+On Windows, open PowerShell and install `uv` plus the GitHub CLI:
+
+```powershell
+winget install --id astral-sh.uv -e
+winget install --id GitHub.cli --source winget
+gh auth login
+```
+
+Open a new terminal after WinGet changes `PATH`, then download and verify the latest release:
+
+```powershell
+$releaseDir = Join-Path ([System.IO.Path]::GetTempPath()) "mcp-agent-ops-$([guid]::NewGuid())"
+New-Item -ItemType Directory -Path $releaseDir | Out-Null
+
+gh release download `
+  --repo martinbechard/mcp-agent-ops `
+  --pattern '*' `
+  --dir $releaseDir
+
+Push-Location $releaseDir
+Get-Content .\SHA256SUMS | ForEach-Object {
+  $expected, $file = $_ -split '\s+', 2
+  $file = $file.TrimStart('*')
+  $actual = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLowerInvariant()
+  if ($actual -ne $expected.ToLowerInvariant()) {
+    throw "Checksum mismatch: $file"
+  }
+}
+Pop-Location
+```
+
+Install the wheel with its tested, locked runtime dependencies:
+
+```powershell
+$wheels = @(Get-ChildItem $releaseDir -Filter 'mcp_agent_ops-*.whl')
+if ($wheels.Count -ne 1) {
+  throw "Expected exactly one mcp-agent-ops wheel."
+}
+
+uv tool install `
+  --python 3.11 `
+  --with-requirements (Join-Path $releaseDir 'runtime-requirements.txt') `
+  $wheels[0].FullName
+
+mcp-agent-ops --version
+mcp-agent-ops --identity-json
+uv tool dir --bin
+```
+
 On macOS or Linux, install `uv` and an authenticated GitHub CLI, then download and verify the latest release assets:
 
 ```bash
@@ -91,6 +140,30 @@ When the server starts with its working directory beneath a configured workspace
 Repository, project, verification, worktree, and validation paths supplied through tools must be absolute and resolve beneath their configured boundary. Catalog discovery, skill validation, and technology detection recheck every nested manifest, metadata file, source file, and supporting resource before reading it. The server rejects missing boundary configuration, traversal, and symlink escape rather than granting ambient filesystem access.
 
 The skill catalog is built lazily and reused for the life of the server process. `skill_refresh` atomically publishes a new catalog snapshot after installed skills change. Technology registry configuration is also cached and takes effect after restarting the server. Claim state remains disk-authoritative and coordinates across server processes.
+
+### Junie on Windows
+
+Junie reads MCP configuration from `%USERPROFILE%\.junie\mcp\mcp.json` for user scope or `.junie\mcp\mcp.json` beneath one project. In the IDE, the same configuration is available under **Settings | Tools | Junie | MCP Settings**.
+
+Use the absolute executable directory reported by `uv tool dir --bin`. Replace the example user and workspace paths with existing absolute paths:
+
+```json
+{
+  "mcpServers": {
+    "mcp-agent-ops": {
+      "command": "C:\\Users\\YOUR_NAME\\.local\\bin\\mcp-agent-ops.exe",
+      "args": [],
+      "env": {
+        "MCP_AGENT_OPS_SKILL_ROOTS": "C:\\Users\\YOUR_NAME\\.agents\\skills;C:\\Users\\YOUR_NAME\\.codex\\skills",
+        "MCP_AGENT_OPS_DETECTION_REGISTRY": "C:\\Users\\YOUR_NAME\\.agents\\skills\\detect-technology-skills\\references\\technology-skill-detection-registry.yaml",
+        "MCP_AGENT_OPS_WORKSPACE_ROOTS": "C:\\Users\\YOUR_NAME\\dev"
+      }
+    }
+  }
+}
+```
+
+Windows path lists use semicolons. Restart Junie after saving the configuration, then confirm that `mcp-agent-ops` is active and exposes its tools in MCP Settings.
 
 Evaluation runners may configure `MCP_AGENT_OPS_AUDIT_LOG` plus `MCP_AGENT_OPS_AUDIT_ROOTS` to create one exclusive digest-only JSON Lines tool-call trace. When a harness starts inherited MCP servers for a parent and subagent, set `MCP_AGENT_OPS_AUDIT_SHARED=true` plus a 32-character lowercase hexadecimal `MCP_AGENT_OPS_AUDIT_SESSION_ID`; each process then writes a separate random stream identity and process-local sequence into the same owner-only file under a POSIX file lock. Both modes record only canonical tool name, lifecycle status, call identity, sequence, and argument or result digests. Shared version-two records also carry the session and process stream identities, and their terminal records carry bounded canonical outcomes for supported deterministic operations. `skill_validate` records `VALID` when its structured `ok` field is true and `FINDINGS` when it is false. `skill_refresh` records `CATALOG` when its published `skills` snapshot is non-empty and `EMPTY` when it is empty. These labels reveal neither skill content nor validation findings. The trace never stores arguments, returned content, prompts, or configured paths. Do not configure this trace for ordinary sessions that do not need evaluator-owned call evidence.
 
