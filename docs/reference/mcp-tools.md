@@ -75,12 +75,12 @@ Verification results contain `ok`, `checked_files`, and structured `findings`. T
 | `skill_load` | `names` | Load one to thirty-two complete skills in requested order with no host paths in the result. |
 | `skill_resource_load` | `requests` | Load one to sixty-four supporting resources in requested order. |
 | `skill_refresh` | none | Build and atomically publish a new process-local skill catalog snapshot. |
-| `skill_validate` | `paths` | Validate catalog skill names or explicit absolute paths within configured skill roots. |
+| `skill_validate` | `paths` | Validate catalog skill names or explicit absolute paths within configured skill roots or the authorized working project. |
 | `detect_technology_skills` | `project_root`, `scopes` | Run copied evidence-based technology detection using server configuration. |
 
 Except for the explicit `skill_find` result, model-facing catalog and skill-document results omit configured roots, manifest paths, and shadowed paths. `skill_load` and `skill_resource_load` are bounded, all-or-nothing operations: invalid, duplicate, missing, unsafe, or oversized requests return an error-only result rather than partial content. Every batch result includes `catalog_revision`; each loaded skill or resource also carries its own SHA-256 digest. A resource must be listed in the active catalog snapshot, so newly added resources require `skill_refresh`. Resource contents are read on demand and their returned digest identifies the exact bytes.
 
-Skill roots come from `MCP_AGENT_OPS_SKILL_ROOTS`. Validation paths and every discovered manifest or metadata file must resolve beneath those roots. Technology detection additionally requires `MCP_AGENT_OPS_DETECTION_REGISTRY`; its project path and every discovered source, owner manifest, and owner-evidence file must remain beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`. Model-facing validation and detection results use relative identities rather than configured host paths. The parsed technology registry remains fixed until server restart.
+Skill roots come from `MCP_AGENT_OPS_SKILL_ROOTS`. Name-based validation uses the same precedence-resolved catalog as skill loading. An explicit absolute validation path may additionally resolve beneath the server's working project when that project is itself beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`. Every discovered manifest or metadata file must remain beneath the selected validation boundary. Technology detection additionally requires `MCP_AGENT_OPS_DETECTION_REGISTRY`; its project path and every discovered source, owner manifest, and owner-evidence file must remain beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`. Model-facing validation and detection results use relative identities rather than configured host paths. The parsed technology registry remains fixed until server restart.
 
 ## Resources
 

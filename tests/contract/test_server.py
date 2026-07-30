@@ -339,6 +339,48 @@ async def test_server_rejects_unknown_skill_name_during_find_and_validation(
             await client.call_tool("skill_validate", {"paths": ["missing"]})
 
 
+async def test_server_validates_explicit_skill_path_beneath_working_directory(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    unpublished_skills = project / "skills"
+    _write_skill(unpublished_skills)
+    server = create_server(
+        skill_roots=[],
+        workspace_roots=[tmp_path],
+        project_root=project,
+    )
+
+    async with Client(server) as client:
+        validation = await client.call_tool(
+            "skill_validate",
+            {"paths": [str(unpublished_skills / "example" / "SKILL.md")]},
+        )
+
+    assert validation.structured_content == {"ok": True, "findings": []}
+
+
+async def test_server_rejects_explicit_skill_path_outside_working_directory(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    outside_skills = tmp_path / "outside-skills"
+    _write_skill(outside_skills)
+    server = create_server(
+        skill_roots=[],
+        workspace_roots=[tmp_path],
+        project_root=project,
+    )
+
+    async with Client(server) as client:
+        with pytest.raises(ToolError, match="outside configured skill validation roots"):
+            await client.call_tool(
+                "skill_validate",
+                {"paths": [str(outside_skills / "example" / "SKILL.md")]},
+            )
+
+
 def test_server_rejects_project_skill_root_symlink_escape(tmp_path: Path) -> None:
     project = tmp_path / "project"
     external_skills = tmp_path / "external-skills"
@@ -442,7 +484,7 @@ async def test_server_rejects_model_paths_outside_configured_roots(tmp_path: Pat
                 "verify_yaml",
                 {"repository_root": str(outside), "paths": ["README.md"]},
             )
-        with pytest.raises(ToolError, match="outside configured skill roots"):
+        with pytest.raises(ToolError, match="outside configured skill validation roots"):
             await client.call_tool("skill_validate", {"paths": [str(outside)]})
         with pytest.raises(ToolError, match="outside configured workspace roots"):
             await client.call_tool(

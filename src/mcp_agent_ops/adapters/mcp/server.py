@@ -244,8 +244,13 @@ def create_server(
         if workspace_roots is not None
         else configured_workspace_roots()
     )
-    project_roots = _project_skill_roots(project_root or Path.cwd(), workspaces)
+    active_project_root = (project_root or Path.cwd()).expanduser().resolve()
+    project_roots = _project_skill_roots(active_project_root, workspaces)
     catalog_roots = [*project_roots, *roots]
+    skill_validation_roots = [
+        *catalog_roots,
+        *([active_project_root] if project_roots else []),
+    ]
     configured_log = audit_log if audit_log is not None else configured_audit_log()
     allowed_audit_roots = (
         list(audit_roots) if audit_roots is not None else configured_audit_roots()
@@ -307,7 +312,11 @@ def create_server(
     def skill_validation_path(value: str) -> Path:
         """Resolve absolute paths safely and all other values as catalog skill names."""
         if Path(value).expanduser().is_absolute():
-            return skill_path(value)
+            return resolve_within_roots(
+                skill_validation_roots,
+                value,
+                "skill validation",
+            )
         return Path(catalog().find_skill(value).path)
 
     def detection_catalog() -> dict[str, object]:
@@ -555,22 +564,23 @@ def create_server(
 
     @mcp.tool
     def skill_validate(paths: list[str]) -> SkillValidationResult:
-        """Validate catalog skill names, skill roots, directories, or exact `SKILL.md` files.
+        """Validate catalog names or explicit skill paths beneath the working project.
 
         Args:
-            paths: One or more catalog names or absolute paths within configured skill roots.
-                Names use the same precedence-selected snapshot as `skill_find`.
+            paths: One or more catalog names or absolute paths within configured skill roots
+                or the authorized working project. Names use the same precedence-selected
+                snapshot as `skill_find`.
 
         Returns:
             A read-only validation result containing safe root-relative findings.
 
         Raises:
             ValueError: If no inputs are supplied, a name is unknown, or a path escapes
-                the configured skill roots.
+                the configured skill roots and authorized working project.
         """
         return validate_skills(
             [skill_validation_path(path) for path in paths],
-            allowed_roots=catalog_roots,
+            allowed_roots=skill_validation_roots,
         )
 
     @mcp.tool
