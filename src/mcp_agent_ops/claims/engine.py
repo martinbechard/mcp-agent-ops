@@ -703,15 +703,15 @@ def _locked_file_identity_is_current(
         path_status is None
         or not stat.S_ISREG(descriptor_status.st_mode)
         or not stat.S_ISREG(path_status.st_mode)
-        or descriptor_status.st_nlink <= 0
-        or path_status.st_nlink <= 0
     ):
         return False
     if platform_name == "nt":
         return True
-    return (descriptor_status.st_dev, descriptor_status.st_ino) == (
-        path_status.st_dev,
-        path_status.st_ino,
+    return (
+        descriptor_status.st_nlink > 0
+        and path_status.st_nlink > 0
+        and (descriptor_status.st_dev, descriptor_status.st_ino)
+        == (path_status.st_dev, path_status.st_ino)
     )
 
 

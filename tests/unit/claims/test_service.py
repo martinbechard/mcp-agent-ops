@@ -651,9 +651,19 @@ def test_operation_lock_does_not_retry_after_handler_failure(
     assert registry.read_bytes() == before
 
 
-def test_locked_file_identity_rejects_posix_device_or_inode_mismatch() -> None:
+def test_locked_file_identity_rejects_unsafe_posix_state() -> None:
     locked = _file_status(device=1, inode=10)
 
+    assert not engine._locked_file_identity_is_current(
+        _file_status(device=1, inode=10, links=0),
+        _file_status(device=1, inode=10),
+        platform_name="posix",
+    )
+    assert not engine._locked_file_identity_is_current(
+        locked,
+        _file_status(device=1, inode=10, links=0),
+        platform_name="posix",
+    )
     assert not engine._locked_file_identity_is_current(
         locked,
         _file_status(device=2, inode=10),
@@ -666,10 +676,10 @@ def test_locked_file_identity_rejects_posix_device_or_inode_mismatch() -> None:
     )
 
 
-def test_locked_file_identity_accepts_windows_regular_file_with_incomparable_ids() -> None:
+def test_locked_file_identity_accepts_windows_regular_file_with_dummy_stat_fields() -> None:
     assert engine._locked_file_identity_is_current(
-        _file_status(device=0, inode=0),
-        _file_status(device=9, inode=27),
+        _file_status(device=0, inode=0, links=0),
+        _file_status(device=9, inode=27, links=0),
         platform_name="nt",
     )
 
@@ -677,15 +687,11 @@ def test_locked_file_identity_accepts_windows_regular_file_with_incomparable_ids
 @pytest.mark.parametrize(
     ("locked", "current"),
     [
-        (_file_status(links=0), _file_status()),
-        (_file_status(), _file_status(links=0)),
         (_file_status(mode=stat.S_IFDIR | 0o700), _file_status()),
         (_file_status(), _file_status(mode=stat.S_IFLNK | 0o700)),
         (_file_status(), None),
     ],
     ids=[
-        "unlinked-descriptor",
-        "unlinked-path",
         "nonregular-descriptor",
         "symlink-path",
         "missing-path",
