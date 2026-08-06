@@ -693,18 +693,41 @@ def _journal_paths(common_directory: Path) -> tuple[Path, Path, Path, Path]:
     return root, root / "hot", root / "archive", root / "journal"
 
 
+def _locked_file_identity_is_current(
+    descriptor_status: os.stat_result,
+    path_status: os.stat_result | None,
+    *,
+    platform_name: str,
+) -> bool:
+    if (
+        path_status is None
+        or not stat.S_ISREG(descriptor_status.st_mode)
+        or not stat.S_ISREG(path_status.st_mode)
+        or descriptor_status.st_nlink <= 0
+        or path_status.st_nlink <= 0
+    ):
+        return False
+    if platform_name == "nt":
+        return True
+    return (descriptor_status.st_dev, descriptor_status.st_ino) == (
+        path_status.st_dev,
+        path_status.st_ino,
+    )
+
+
 def _locked_file_matches_path(path: Path, locked_file: TextIO) -> bool:
     try:
         descriptor_status = os.fstat(locked_file.fileno())
-        path_status = path.stat(follow_symlinks=False)
     except OSError:
         return False
-    return (
-        stat.S_ISREG(descriptor_status.st_mode)
-        and stat.S_ISREG(path_status.st_mode)
-        and descriptor_status.st_nlink > 0
-        and descriptor_status.st_dev == path_status.st_dev
-        and descriptor_status.st_ino == path_status.st_ino
+    try:
+        path_status = path.stat(follow_symlinks=False)
+    except OSError:
+        path_status = None
+    return _locked_file_identity_is_current(
+        descriptor_status,
+        path_status,
+        platform_name=os.name,
     )
 
 

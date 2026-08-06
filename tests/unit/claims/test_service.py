@@ -7,16 +7,33 @@
 import argparse
 import json
 import os
+import stat
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Barrier, Event, Thread, current_thread
+from types import SimpleNamespace
 
 import pytest
 from pytest import MonkeyPatch
 
 from mcp_agent_ops.claims import engine, service
+
+
+def _file_status(
+    *,
+    mode: int = stat.S_IFREG | 0o600,
+    device: int = 1,
+    inode: int = 1,
+    links: int = 1,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        st_mode=mode,
+        st_dev=device,
+        st_ino=inode,
+        st_nlink=links,
+    )
 
 
 def _initialize_repository(path: Path) -> None:
@@ -632,3 +649,54 @@ def test_operation_lock_does_not_retry_after_handler_failure(
     assert acquired.result["outcome"] == "SHARED_CHECKOUT_ACQUIRED"
     assert identity_checks == 1
     assert registry.read_bytes() == before
+
+
+def test_locked_file_identity_rejects_posix_device_or_inode_mismatch() -> None:
+    locked = _file_status(device=1, inode=10)
+
+    assert not engine._locked_file_identity_is_current(
+        locked,
+        _file_status(device=2, inode=10),
+        platform_name="posix",
+    )
+    assert not engine._locked_file_identity_is_current(
+        locked,
+        _file_status(device=1, inode=20),
+        platform_name="posix",
+    )
+
+
+def test_locked_file_identity_accepts_windows_regular_file_with_incomparable_ids() -> None:
+    assert engine._locked_file_identity_is_current(
+        _file_status(device=0, inode=0),
+        _file_status(device=9, inode=27),
+        platform_name="nt",
+    )
+
+
+@pytest.mark.parametrize(
+    ("locked", "current"),
+    [
+        (_file_status(links=0), _file_status()),
+        (_file_status(), _file_status(links=0)),
+        (_file_status(mode=stat.S_IFDIR | 0o700), _file_status()),
+        (_file_status(), _file_status(mode=stat.S_IFLNK | 0o700)),
+        (_file_status(), None),
+    ],
+    ids=[
+        "unlinked-descriptor",
+        "unlinked-path",
+        "nonregular-descriptor",
+        "symlink-path",
+        "missing-path",
+    ],
+)
+def test_locked_file_identity_rejects_unsafe_windows_state(
+    locked: SimpleNamespace,
+    current: SimpleNamespace | None,
+) -> None:
+    assert not engine._locked_file_identity_is_current(
+        locked,
+        current,
+        platform_name="nt",
+    )
