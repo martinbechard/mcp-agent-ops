@@ -15,11 +15,13 @@ import portalocker
 
 
 @contextmanager
-def exclusive_text_file(path: Path) -> Iterator[IO[str]]:
+def exclusive_text_file(path: Path, *, create: bool = True) -> Iterator[IO[str]]:
     """Open and exclusively lock one persistent repository text file.
 
     Args:
         path: File whose stable identity is the cross-process lock authority.
+        create: Whether to create the file when it is absent. Existing legacy state
+            uses false so a concurrent migration cannot recreate its retired path.
 
     Yields:
         One readable and writable text stream positioned by the caller.
@@ -33,7 +35,8 @@ def exclusive_text_file(path: Path) -> Iterator[IO[str]]:
     same file identity.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    file_descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    flags = os.O_RDWR | (os.O_CREAT if create else 0)
+    file_descriptor = os.open(path, flags, 0o600)
     with os.fdopen(file_descriptor, "r+", encoding="utf-8") as descriptor:
         while True:
             try:

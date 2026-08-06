@@ -52,6 +52,7 @@ SUMMARY_SCHEMA_VERSION = 2
 REPORT_SCHEMA_VERSION = 2
 WORK_ITEM_REPORT_SCHEMA_VERSION = 1
 DEFAULT_HOT_DAYS = 2
+REGISTRY_LOCK_RETRY_LIMIT = 16
 MAX_SCOPE_REASON_LENGTH = 200
 MAX_IDENTIFIER_LENGTH = 200
 MAX_EXTENSION_EVIDENCE_LENGTH = 1000
@@ -388,11 +389,11 @@ def _finish_legacy_migration(repository: Path) -> None:
     _write_state_marker(repository, "complete", "legacy")
 
 
-def _resolve_registry_path(
+def _resolve_registry_path_once(
     repository: Path,
     operation: str,
     claim_id: str | None,
-) -> Path:
+) -> Path | None:
     registry_path = _registry_path(repository)
     legacy_registry = _legacy_registry_path(repository)
     legacy_events = _git_common_directory(repository) / EVENT_DIRECTORY_NAME
@@ -461,8 +462,12 @@ def _resolve_registry_path(
         )
 
     if os.path.lexists(legacy_registry):
-        with exclusive_text_file(legacy_registry) as legacy_file:
-            try:
+        verified_lock = False
+        try:
+            with exclusive_text_file(legacy_registry, create=False) as legacy_file:
+                if not _locked_file_matches_path(legacy_registry, legacy_file):
+                    return None
+                verified_lock = True
                 legacy_file.seek(0)
                 raw = legacy_file.read()
                 try:
@@ -506,8 +511,10 @@ def _resolve_registry_path(
                         legacy_registry=str(legacy_registry),
                     ) from error
                 return registry_path
-            finally:
-                pass
+        except (OSError, portalocker.LockException):
+            if not verified_lock and _claim_path_handoff_occurred(legacy_registry):
+                return None
+            raise
 
     with _migration_lock(repository):
         current_marker = _state_marker(repository)
@@ -525,7 +532,25 @@ def _resolve_registry_path(
     return registry_path
 
 
-def _read_only_registry(repository: Path) -> tuple[Path, dict[str, Any]]:
+def _resolve_registry_path(
+    repository: Path,
+    operation: str,
+    claim_id: str | None,
+) -> Path:
+    """Resolve mutation storage, retrying boundedly when migration changes its inode."""
+    for _attempt in range(REGISTRY_LOCK_RETRY_LIMIT):
+        registry_path = _resolve_registry_path_once(repository, operation, claim_id)
+        if registry_path is not None:
+            return registry_path
+    raise _ClaimStateError(
+        "registry_resolution_race",
+        "Claim registry storage kept changing while its migration lock was acquired.",
+        operation=operation,
+        claim_id=claim_id,
+    )
+
+
+def _read_only_registry_once(repository: Path) -> tuple[Path, dict[str, Any]] | None:
     """Read claim state under its existing lock without creating or migrating storage."""
     registry_path = _registry_path(repository)
     legacy_registry = _legacy_registry_path(repository)
@@ -583,8 +608,12 @@ def _read_only_registry(repository: Path) -> tuple[Path, dict[str, Any]]:
                 canonical_registry=str(registry_path),
                 legacy_registry=str(legacy_registry),
             )
-        with exclusive_text_file(legacy_registry) as legacy_file:
-            try:
+        verified_lock = False
+        try:
+            with exclusive_text_file(legacy_registry, create=False) as legacy_file:
+                if not _locked_file_matches_path(legacy_registry, legacy_file):
+                    return None
+                verified_lock = True
                 legacy_file.seek(0)
                 raw = legacy_file.read()
                 try:
@@ -610,8 +639,10 @@ def _read_only_registry(repository: Path) -> tuple[Path, dict[str, Any]]:
                         allowed_operation="release",
                     )
                 return registry_path, {"claims": []}
-            finally:
-                pass
+        except (OSError, portalocker.LockException):
+            if not verified_lock and _claim_path_handoff_occurred(legacy_registry):
+                return None
+            raise
 
     if not os.path.lexists(legacy_registry) and os.path.lexists(legacy_events):
         raise _ClaimStateError(
@@ -645,6 +676,18 @@ def _read_only_registry(repository: Path) -> tuple[Path, dict[str, Any]]:
             pass
 
 
+def _read_only_registry(repository: Path) -> tuple[Path, dict[str, Any]]:
+    """Read stable claim state, retrying boundedly across legacy migration."""
+    for _attempt in range(REGISTRY_LOCK_RETRY_LIMIT):
+        snapshot = _read_only_registry_once(repository)
+        if snapshot is not None:
+            return snapshot
+    raise _ClaimStateError(
+        "registry_read_race",
+        "Claim registry storage kept changing while its read lock was acquired.",
+    )
+
+
 def _journal_paths(common_directory: Path) -> tuple[Path, Path, Path, Path]:
     root = common_directory / EVENT_DIRECTORY_NAME
     return root, root / "hot", root / "archive", root / "journal"
@@ -659,6 +702,7 @@ def _locked_file_matches_path(path: Path, locked_file: TextIO) -> bool:
     return (
         stat.S_ISREG(descriptor_status.st_mode)
         and stat.S_ISREG(path_status.st_mode)
+        and descriptor_status.st_nlink > 0
         and descriptor_status.st_dev == path_status.st_dev
         and descriptor_status.st_ino == path_status.st_ino
     )
