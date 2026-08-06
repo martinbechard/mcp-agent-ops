@@ -337,7 +337,7 @@ def create_server(
 
     @mcp.tool
     def claim_status(repository: str) -> ClaimCommandResult:
-        """Return the authoritative live claim registry for one Git repository."""
+        """Return primary-root claim state or a structured migration stop without creating absent state."""
         return run_claim_command(["--repo", str(workspace_path(repository)), "status"])
 
     @mcp.tool
@@ -371,8 +371,9 @@ def create_server(
         ISOLATED_CHECKOUT_ACQUIRED, CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED,
         SHARED_CHECKOUT_REQUIRED, SHARED_CHECKOUT_RELEASE_REQUIRED,
         ISOLATED_CHECKOUT_SETUP_REQUIRED, DIRTY_CHECKOUT_RECOVERY_AUTHORIZATION_REQUIRED,
-        DIRTY_CHECKOUT_RECOVERY_ACQUIRED, or a structured rejection with the copied claim
-        engine's stable exit code. Renamed outcomes also carry legacy_outcome.
+        DIRTY_CHECKOUT_RECOVERY_ACQUIRED, CLAIM_STATE_MIGRATION_BLOCKED, or a structured
+        rejection with the copied claim engine's stable exit code. Renamed outcomes also
+        carry legacy_outcome.
         """
         arguments = [
             "--repo",
@@ -458,7 +459,7 @@ def create_server(
 
     @mcp.tool
     def claim_release(repository: str, claim_id: str, no_change: bool = False) -> ClaimCommandResult:
-        """Release a clean committed claim or an explicitly declared no-change claim."""
+        """Release a clean claim, including the exact drain-only claim during legacy rollout."""
         arguments = [
             "--repo",
             str(workspace_path(repository)),
@@ -485,7 +486,7 @@ def create_server(
 
     @mcp.tool
     def claim_report(repository: str, since: str = "2d") -> ClaimCommandResult:
-        """Report claim contention and lifecycle metrics without mutating the live registry."""
+        """Report canonical contention metrics without creating or migrating absent state."""
         return run_claim_command(
             [
                 "--repo",

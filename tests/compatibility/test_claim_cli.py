@@ -30,7 +30,10 @@ class AgentClaimTests(unittest.TestCase):
         (self.repository / "src").mkdir()
         (self.repository / "docs").mkdir()
         (self.repository / "backlog").mkdir()
-        (self.repository / ".gitignore").write_text("/.worktrees/\n", encoding="utf-8")
+        (self.repository / ".gitignore").write_text(
+            "/.worktrees/\n/.codex/agent-claim/\n",
+            encoding="utf-8",
+        )
         (self.repository / "README.md").write_text("baseline\n", encoding="utf-8")
         (self.repository / "src" / "one.py").write_text("one\n", encoding="utf-8")
         (self.repository / "docs" / "guide.md").write_text("guide\n", encoding="utf-8")
@@ -86,6 +89,28 @@ class AgentClaimTests(unittest.TestCase):
             claim_id,
         ]
 
+    def legacy_claim(self, claim_id: str) -> dict[str, object]:
+        """Build one pre-upgrade primary-worktree claim for migration tests."""
+        return {
+            "agent": "legacy-agent",
+            "all_files": False,
+            "baseline_commit": self.git("rev-parse", "HEAD").stdout.strip(),
+            "baseline_status": [],
+            "branch": "main",
+            "claim_id": claim_id,
+            "claimed_at": "2026-07-12T10:00:00Z",
+            "files": ["README.md"],
+            "heartbeat": "2026-07-12T10:00:00Z",
+            "mode": "primary",
+            "parent_claim_id": None,
+            "resources": [],
+            "root_task_id": claim_id,
+            "scope_reasons": {},
+            "task": "pre-upgrade claim",
+            "trees": [],
+            "worktree": str(self.repository),
+        }
+
     def isolated_arguments(self, claim_id: str) -> tuple[list[str], Path]:
         """Build unique branch and worktree arguments for a later independent writer."""
         isolated_path = self.repository / ".worktrees" / claim_id
@@ -105,11 +130,24 @@ class AgentClaimTests(unittest.TestCase):
 
     def registry_path(self) -> Path:
         """Return the repository-global live registry path."""
+        return self.state_root() / "agent-claims.json"
+
+    def state_root(self) -> Path:
+        """Return the primary-worktree claim-state root."""
+        return self.repository / ".codex" / "agent-claim"
+
+    def legacy_registry_path(self) -> Path:
+        """Return the pre-migration live registry path."""
         return self.common_directory() / "agent-claims.json"
+
+    def legacy_event_root(self) -> Path:
+        """Return the pre-migration event-history path."""
+        return self.common_directory() / "agent-claim-events"
 
     def test_claim_update_preserves_registry_file_identity(self) -> None:
         """Keep the repository-global lock attached to one stable registry file."""
         registry_path = self.registry_path()
+        registry_path.parent.mkdir(parents=True)
         registry_path.write_text('{"claims": []}\n', encoding="utf-8")
         initial_identity = registry_path.stat().st_ino
 
@@ -131,9 +169,158 @@ class AgentClaimTests(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stderr)
         self.assertEqual(initial_identity, registry_path.stat().st_ino)
 
+    def test_primary_and_two_linked_worktrees_resolve_one_ignored_registry(self) -> None:
+        linked_one = Path(self.temporary_directory.name) / "linked-one"
+        linked_two = Path(self.temporary_directory.name) / "linked-two"
+        self.git("worktree", "add", "-b", "linked-one", str(linked_one), "HEAD")
+        self.git("worktree", "add", "-b", "linked-two", str(linked_two), "HEAD")
+
+        acquired = self.claim(*self.acquire_arguments("shared"), "--file", "README.md")
+        primary_status = self.output(self.claim("status"))
+        linked_one_status = self.output(self.claim("status", repo=linked_one))
+        linked_two_status = self.output(self.claim("status", repo=linked_two))
+        ignored = self.git(
+            "check-ignore",
+            "--quiet",
+            "--no-index",
+            "--",
+            ".codex/agent-claim/agent-claims.json",
+        )
+
+        self.assertEqual(0, acquired.returncode, acquired.stderr)
+        self.assertEqual(
+            [str(self.registry_path().resolve())] * 3,
+            [
+                primary_status["registry"],
+                linked_one_status["registry"],
+                linked_two_status["registry"],
+            ],
+        )
+        self.assertEqual(
+            [["shared"], ["shared"], ["shared"]],
+            [
+                [claim["claim_id"] for claim in primary_status["claims"]],
+                [claim["claim_id"] for claim in linked_one_status["claims"]],
+                [claim["claim_id"] for claim in linked_two_status["claims"]],
+            ],
+        )
+        self.assertEqual(0, ignored.returncode)
+
+    def test_status_is_lazy_when_canonical_and_legacy_state_are_absent(self) -> None:
+        completed = self.claim("status")
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        result = self.output(completed)
+        self.assertEqual(str(self.registry_path().resolve()), result["registry"])
+        self.assertEqual([], result["claims"])
+        self.assertFalse(self.state_root().exists())
+        self.assertFalse(self.legacy_registry_path().exists())
+        self.assertFalse(self.legacy_event_root().exists())
+
+    def test_claim_state_is_outside_every_file_ownership_domain(self) -> None:
+        completed = self.claim(
+            *self.acquire_arguments("operational-state"),
+            "--file",
+            ".codex/agent-claim/agent-claims.json",
+        )
+
+        self.assertEqual(1, completed.returncode)
+        result = self.output(completed)
+        self.assertEqual("INVALID_SCOPE", result["outcome"])
+        self.assertEqual("operational_path_not_claimable", result["rejection"]["reason"])
+        self.assertFalse(self.registry_path().exists())
+
+    def test_empty_legacy_registry_and_history_migrate_on_first_write(self) -> None:
+        legacy_registry = self.legacy_registry_path()
+        legacy_registry.write_text('{"claims": []}\n', encoding="utf-8")
+        legacy_event = self.legacy_event_root() / "hot" / "2026-07-12.jsonl"
+        legacy_event.parent.mkdir(parents=True)
+        legacy_event.write_text("", encoding="utf-8")
+
+        completed = self.claim(*self.acquire_arguments("migrated"), "--file", "README.md")
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual(str(self.registry_path().resolve()), self.output(completed)["registry"])
+        self.assertTrue(self.registry_path().is_file())
+        self.assertTrue(self.legacy_registry_path().is_dir())
+        self.assertTrue(self.legacy_event_root().is_file())
+        self.assertTrue((self.hot_directory() / "2026-07-12.jsonl").is_file())
+
+    def test_interrupted_empty_migration_resumes_and_installs_legacy_boundaries(self) -> None:
+        self.registry_path().parent.mkdir(parents=True)
+        self.registry_path().write_text('{"claims": []}\n', encoding="utf-8")
+        self.legacy_registry_path().write_text('{"claims": []}\n', encoding="utf-8")
+        self.legacy_event_root().mkdir()
+
+        completed = self.claim(*self.acquire_arguments("resumed"), "--file", "README.md")
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertTrue(self.legacy_registry_path().is_dir())
+        self.assertTrue(self.legacy_event_root().is_file())
+        with self.assertRaises(IsADirectoryError):
+            self.legacy_registry_path().open("r+", encoding="utf-8")
+        with self.assertRaises(FileExistsError):
+            self.legacy_event_root().mkdir(parents=True, exist_ok=True)
+
+    def test_live_legacy_claim_blocks_ordinary_operations_but_exact_release_drains_it(self) -> None:
+        legacy_registry = self.legacy_registry_path()
+        legacy_registry.write_text(
+            json.dumps({"claims": [self.legacy_claim("legacy-live")]}),
+            encoding="utf-8",
+        )
+        before = legacy_registry.read_bytes()
+
+        blocked = self.claim(*self.acquire_arguments("new"), "--file", "README.md")
+        wrong_release = self.claim("release", "--claim-id", "other", "--no-change")
+
+        self.assertEqual(3, blocked.returncode)
+        self.assertEqual(3, wrong_release.returncode)
+        for completed in (blocked, wrong_release):
+            result = self.output(completed)
+            self.assertEqual("CLAIM_STATE_MIGRATION_BLOCKED", result["outcome"])
+            self.assertEqual("legacy_live_claim_requires_release", result["reason"])
+            self.assertEqual(["legacy-live"], result["legacy_claim_ids"])
+        self.assertEqual(before, legacy_registry.read_bytes())
+        self.assertFalse(self.state_root().exists())
+
+        released = self.claim("release", "--claim-id", "legacy-live", "--no-change")
+
+        self.assertEqual(0, released.returncode, released.stderr)
+        self.assertEqual("RELEASED", self.output(released)["outcome"])
+        self.assertEqual([], json.loads(legacy_registry.read_text(encoding="utf-8"))["claims"])
+        self.assertTrue(list(self.hot_directory().glob("*.jsonl")))
+
+        acquired = self.claim(*self.acquire_arguments("new"), "--file", "README.md")
+
+        self.assertEqual(0, acquired.returncode, acquired.stderr)
+        self.assertTrue(self.legacy_registry_path().is_dir())
+        self.assertTrue(self.legacy_event_root().is_file())
+
+    def test_contradictory_dual_live_state_returns_non_mutating_structured_stop(self) -> None:
+        self.registry_path().parent.mkdir(parents=True)
+        self.registry_path().write_text(
+            json.dumps({"claims": [self.legacy_claim("canonical-live")]}),
+            encoding="utf-8",
+        )
+        self.legacy_registry_path().write_text(
+            json.dumps({"claims": [self.legacy_claim("legacy-live")]}),
+            encoding="utf-8",
+        )
+        canonical_before = self.registry_path().read_bytes()
+        legacy_before = self.legacy_registry_path().read_bytes()
+
+        completed = self.claim("status")
+
+        self.assertEqual(3, completed.returncode)
+        result = self.output(completed)
+        self.assertEqual("CLAIM_STATE_MIGRATION_BLOCKED", result["outcome"])
+        self.assertEqual("contradictory_dual_registry", result["reason"])
+        self.assertEqual(canonical_before, self.registry_path().read_bytes())
+        self.assertEqual(legacy_before, self.legacy_registry_path().read_bytes())
+
     def hot_directory(self) -> Path:
         """Return the repository-global hot journal directory."""
-        return self.common_directory() / "agent-claim-events" / "hot"
+        return self.state_root() / "agent-claim-events" / "hot"
 
     def journal_events(self) -> list[dict[str, object]]:
         """Read all hot events for lifecycle and concurrency assertions."""
@@ -702,6 +889,7 @@ class AgentClaimTests(unittest.TestCase):
             "trees": [],
             "worktree": str(self.repository),
         }
+        self.registry_path().parent.mkdir(parents=True)
         self.registry_path().write_text(json.dumps({"claims": [legacy_claim]}), encoding="utf-8")
 
         status = self.output(self.claim("status"))["claims"][0]
@@ -752,6 +940,7 @@ class AgentClaimTests(unittest.TestCase):
             "trees": [],
             "worktree": str(self.repository),
         }
+        self.registry_path().parent.mkdir(parents=True)
         self.registry_path().write_text(json.dumps({"claims": [legacy_claim]}), encoding="utf-8")
 
         status = self.output(self.claim("status"))["claims"][0]
@@ -1163,8 +1352,8 @@ class AgentClaimTests(unittest.TestCase):
             ["2026-07-12.jsonl", "2026-07-13.jsonl"],
             sorted(path.name for path in self.hot_directory().glob("*.jsonl")),
         )
-        archive_root = self.common_directory() / "agent-claim-events" / "archive" / "2026" / "07"
-        summary_root = self.common_directory() / "agent-claim-events" / "journal" / "2026" / "07"
+        archive_root = self.state_root() / "agent-claim-events" / "archive" / "2026" / "07"
+        summary_root = self.state_root() / "agent-claim-events" / "journal" / "2026" / "07"
         for day in ("2026-07-10", "2026-07-11"):
             archive = archive_root / f"{day}.jsonl.gz"
             summary = summary_root / f"{day}.json"
@@ -1185,7 +1374,7 @@ class AgentClaimTests(unittest.TestCase):
 
         self.assertEqual(1, interrupted.returncode)
         self.assertTrue(hot.exists())
-        archive = self.common_directory() / "agent-claim-events" / "archive" / "2026" / "07" / "2026-07-10.jsonl.gz"
+        archive = self.state_root() / "agent-claim-events" / "archive" / "2026" / "07" / "2026-07-10.jsonl.gz"
         self.assertFalse(archive.exists())
         completed = self.claim(
             "maintain-journal",
@@ -1197,7 +1386,7 @@ class AgentClaimTests(unittest.TestCase):
     def test_archive_validation_failure_preserves_hot_source(self) -> None:
         event = self.synthetic_event("old", "2026-07-10T12:00:00Z", "acquire", "PRIMARY", "old")
         hot = self.write_daily_events("2026-07-10", [event])
-        archive = self.common_directory() / "agent-claim-events" / "archive" / "2026" / "07" / "2026-07-10.jsonl.gz"
+        archive = self.state_root() / "agent-claim-events" / "archive" / "2026" / "07" / "2026-07-10.jsonl.gz"
         archive.parent.mkdir(parents=True)
         archive.write_bytes(gzip.compress(b'{"different":"event"}\n'))
 

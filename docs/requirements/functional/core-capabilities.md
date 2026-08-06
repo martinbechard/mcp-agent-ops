@@ -4,7 +4,8 @@
 
 - The service exposes structured operations for claim status, acquisition, extension, heartbeat, release, journal maintenance, and contention reporting.
 - MCP and CLI claim operations preserve the stable outcomes and exit-code semantics of the existing `agent-claim` command.
-- Claims from linked worktrees coordinate through one registry in the Git common directory.
+- Claims from primary and linked worktrees coordinate through one registry beneath the primary worktree's ignored `.codex/agent-claim` directory.
+- Read-only status and reporting do not create absent state. Empty legacy state migrates recoverably on the first mutation; live or contradictory legacy state produces a structured non-mutating stop except for exact live-claim release.
 - Claim mutations append diagnostic events without making journal availability part of ownership safety.
 - Claims distinguish project-files, backlog, and all-files ownership. Project-files excludes backlog; backlog and all-files are primary-worktree-only.
 - Explicit paths derive one file domain. Mixed project/backlog paths and cross-domain extension fail atomically with structured guidance.

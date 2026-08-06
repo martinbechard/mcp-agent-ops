@@ -21,6 +21,7 @@ from mcp.types import CallToolRequestParams
 
 from mcp_agent_ops.adapters.mcp.audit import ToolAuditLog, ToolAuditMiddleware
 from mcp_agent_ops.adapters.mcp.server import create_server
+from mcp_agent_ops.claims.engine import dispatch as dispatch_claim
 from mcp_agent_ops.skill_catalog.catalog import SkillCatalog
 
 
@@ -247,6 +248,37 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
         assert resources.structured_content["resources"][0]["content"] == "supporting guide\n"
         validation = await client.call_tool("skill_validate", {"paths": [str(skills / "example")]})
         assert validation.structured_content["ok"] is True
+
+
+async def test_claim_mcp_and_cli_share_state_path_and_migration_stop(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    skills = tmp_path / "skills"
+    _initialize_repository(repository)
+    _write_skill(skills)
+    server = create_server([skills], workspace_roots=[tmp_path])
+
+    cli_status, cli_status_code = dispatch_claim(["--repo", str(repository), "status"])
+    async with Client(server) as client:
+        mcp_status = await client.call_tool("claim_status", {"repository": str(repository)})
+    assert cli_status_code == 0
+    assert mcp_status.structured_content == {"exit_code": 0, "result": cli_status}
+    assert cli_status["registry"] == str(
+        (repository / ".codex" / "agent-claim" / "agent-claims.json").resolve()
+    )
+
+    canonical_registry = repository / ".codex" / "agent-claim" / "agent-claims.json"
+    canonical_registry.parent.mkdir(parents=True)
+    canonical_registry.write_text('{"claims":[{"claim_id":"canonical-live"}]}', encoding="utf-8")
+    legacy_registry = repository / ".git" / "agent-claims.json"
+    legacy_registry.write_text('{"claims":[{"claim_id":"legacy-live"}]}', encoding="utf-8")
+
+    cli_stop, cli_stop_code = dispatch_claim(["--repo", str(repository), "status"])
+    async with Client(server) as client:
+        mcp_stop = await client.call_tool("claim_status", {"repository": str(repository)})
+    assert cli_stop_code == 3
+    assert cli_stop["outcome"] == "CLAIM_STATE_MIGRATION_BLOCKED"
+    assert cli_stop["reason"] == "contradictory_dual_registry"
+    assert mcp_stop.structured_content == {"exit_code": 3, "result": cli_stop}
 
 
 async def test_server_reuses_one_catalog_snapshot_until_explicit_refresh(tmp_path: Path) -> None:

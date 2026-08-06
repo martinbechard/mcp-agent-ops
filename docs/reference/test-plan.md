@@ -20,6 +20,7 @@
 - Journal warning behavior, two-day hot retention, lossless archival, and contention reporting.
 - Structured in-process dispatch with byte-compatible CLI output.
 - Concurrent calls against unrelated repositories without process-global serialization.
+- Primary and linked-worktree canonical state resolution, absent-state read-only behavior, empty legacy-history migration, interrupted recovery, exact live-claim drain, split-brain refusal, and ignored operational scope.
 
 ## Contract tests
 
@@ -27,6 +28,7 @@
 - Fail-closed startup when an evaluator-pinned installed-runtime digest does not match.
 - Published MCP tool names and bounded input/output schemas, including all three broad claim domains, precedence-resolved skill path lookup, validation by name or absolute path, batch loading, and explicit refresh.
 - In-memory calls for each capability group and immutable catalog reuse across repeated calls.
+- CLI and MCP parity for the canonical registry path and structured migration stops.
 - Rejection of repository, worktree, verification, validation, and detection paths outside configured roots.
 - Path-free catalog errors plus path-free skill-validation and technology-detection results.
 - Digest-only tool audit lifecycle, exclusive audit-root confinement, safe shared parent and subagent streams, content omission, and real stdio evidence.
