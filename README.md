@@ -10,7 +10,7 @@ The service owns five capability groups:
 - Agent Skill validation; and
 - evidence-based technology-skill detection.
 
-The domain packages are independent of FastMCP. The installed `mcp-agent-ops` command starts the FastMCP stdio server, while `mcp-agent-ops-claims` preserves a direct CLI surface for claim coordination and recovery. Claim callers can select project-files, primary-only backlog, or explicit all-files ownership; project isolation uses a canonical sparse worktree that omits backlog. Every checkout resolves disposable claim state to the primary worktree's ignored `.codex/agent-claim` directory.
+The domain packages are independent of FastMCP. The installed `mcp-agent-ops` command starts the FastMCP stdio server, while `mcp-agent-ops-claims` preserves the direct claim CLI contract. Claim callers can own work-item activity, explicit or broad file scope, or one policy-bounded runtime resource with deadlines. Every checkout resolves disposable claim state to the primary worktree's ignored `.codex/agent-claim` directory.
 
 The claim engine, technology detector, and Agent Skill validator began as copies of the accepted `dev-methodology` implementations. See `docs/reference/copied-scripts.md` for exact provenance, intentional adapter changes, and compatibility coverage.
 
@@ -246,4 +246,4 @@ The tag-triggered workflow reruns tests on Python 3.11, 3.12, and 3.13 before pu
 
 ## State ownership
 
-Claim registries and event journals live beneath each target repository's primary-worktree `.codex/agent-claim` directory. Read-only status and reporting do not create absent state. A first mutating operation migrates only empty legacy Git-metadata state, preserves history and recoverable backups, and installs incompatible markers at the old paths so an older helper cannot create a split registry. Live legacy claims are drain-only through exact release. Skill files remain authoritative in their installed roots. Process-local catalog and registry snapshots are read versions identified by digests, not independent state stores; publishing or restarting replaces them from disk.
+Claim registries and event journals live beneath each target repository's primary-worktree `.codex/agent-claim` directory. Read-only status and reporting do not create absent state. A first mutating operation migrates only empty legacy Git-metadata state, preserves its history, writes the version-two canonical state marker, and installs the exact incompatible registry-directory and event-file markers at the old paths. Live legacy claims are drain-only through exact release. Skill files remain authoritative in their installed roots. Process-local catalog snapshots are read versions identified by digests, not independent claim-state stores; publishing or restarting replaces them from disk.

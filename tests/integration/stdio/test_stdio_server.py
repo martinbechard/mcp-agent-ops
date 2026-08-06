@@ -42,9 +42,24 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
         assert "skill_find" in names
         assert "skill_load" in names
         assert "skill_refresh" in names
+        assert "claim_extend_deadline" in names
+        assert "claim_reset" in names
         acquire = next(tool for tool in tools if tool.name == "claim_acquire")
-        assert {"project_files", "backlog", "all_files"} <= set(acquire.inputSchema["properties"])
-        assert "SHARED_CHECKOUT_RELEASE_REQUIRED" in (acquire.description or "")
+        assert {
+            "project_files",
+            "backlog",
+            "all_files",
+            "work_item_id",
+            "activity",
+            "resource_class",
+            "resource_id",
+            "expected_duration_seconds",
+            "requested_hard_stop_duration_seconds",
+        } <= set(acquire.inputSchema["properties"])
+        release = next(tool for tool in tools if tool.name == "claim_release")
+        assert {"disposition", "blocker_reference"} <= set(release.inputSchema["properties"])
+        assert "no_change" not in release.inputSchema["properties"]
+        assert "work_item_id" in (acquire.description or "")
         result = await client.call_tool("skill_read", {"name": "example"})
         assert result.structured_content["name"] == "example"
         assert "entry" not in result.structured_content

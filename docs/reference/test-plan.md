@@ -11,22 +11,22 @@
 
 ## Claim compatibility tests
 
-- Primary, isolated, wait, recovery, extension, heartbeat, and release outcomes.
+- Work-item, path, resource, wait, extension, deadline-extension, heartbeat, release, and reset outcomes.
 - Exact-file, tree, project-files, backlog, all-files, and exclusive-resource overlap semantics.
 - Broad-domain mutual exclusion, explicit backlog compatibility normalization, and atomic mixed-domain rejection.
 - Primary-only backlog and all-files routing plus canonical project isolation without a backlog checkout.
-- Domain-aware recovery and release, including unchanged out-of-domain dirtiness and changed or committed out-of-domain rejection.
+- Exact release without Git or delivery inspection, including work-item disposition validation and registry rollback on journal failure.
 - Stable process exit codes and structured JSON output.
 - Journal warning behavior, two-day hot retention, lossless archival, and contention reporting.
 - Structured in-process dispatch with byte-compatible CLI output.
 - Concurrent calls against unrelated repositories without process-global serialization.
-- Primary and linked-worktree canonical state resolution, absent-state read-only behavior, empty legacy-history migration, interrupted recovery, exact live-claim drain, split-brain refusal, and ignored operational scope.
+- Primary and linked-worktree canonical state resolution, absent-state read-only behavior, exact layout-version-two markers, empty legacy-history migration, interrupted recovery, exact live-claim drain, split-state refusal, and ignored operational scope.
 
 ## Contract tests
 
 - Stable non-starting command-line package version and installed-runtime identity.
 - Fail-closed startup when an evaluator-pinned installed-runtime digest does not match.
-- Published MCP tool names and bounded input/output schemas, including all three broad claim domains, precedence-resolved skill path lookup, validation by name or absolute path, batch loading, and explicit refresh.
+- Published MCP tool names and bounded input/output schemas, including work-item fields, resource timing, deadline extension, release disposition, reset, all three broad claim domains, precedence-resolved skill path lookup, validation by name or absolute path, batch loading, and explicit refresh.
 - In-memory calls for each capability group and immutable catalog reuse across repeated calls.
 - CLI and MCP parity for the canonical registry path and structured migration stops.
 - Rejection of repository, worktree, verification, validation, and detection paths outside configured roots.
@@ -38,7 +38,7 @@
 
 - Simultaneous claim processes cannot both acquire primary ownership.
 - Overlapping concurrent claims produce one safe owner and one wait outcome.
-- A real stdio subprocess initializes, advertises broad claim-domain schemas, lists tools and resources, preserves a catalog snapshot until explicit refresh, and shuts down cleanly.
+- A real stdio subprocess initializes, advertises current work-item, deadline, release, reset, and broad-domain schemas, lists tools and resources, preserves a catalog snapshot until explicit refresh, and shuts down cleanly.
 - Windows CI runs the complete claim compatibility suite plus a real stdio subprocess; evaluator-only shared audit remains on its documented POSIX boundary.
 
 ## Release gates

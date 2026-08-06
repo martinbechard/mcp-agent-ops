@@ -38,10 +38,12 @@ from mcp_agent_ops.verification.yaml_files import verify_yaml as verify_yaml_dom
 AUDITED_TOOL_NAMES = frozenset({
     "claim_acquire",
     "claim_extend",
+    "claim_extend_deadline",
     "claim_heartbeat",
     "claim_maintain_journal",
     "claim_release",
     "claim_report",
+    "claim_reset",
     "claim_status",
     "detect_technology_skills",
     "skill_find",
@@ -71,8 +73,7 @@ _BacklogScope = Annotated[
     Field(
         description=(
             "Select the complete primary-worktree-only backlog. Mutually exclusive with project_files "
-            "and all_files; returns SHARED_CHECKOUT_RELEASE_REQUIRED when another claim owns "
-            "the shared checkout, or SHARED_CHECKOUT_REQUIRED from another checkout."
+            "and all_files; returns SHARED_CHECKOUT_REQUIRED from another checkout."
         )
     ),
 ]
@@ -124,6 +125,24 @@ def _append_scope(
         arguments.extend(("--scope-reason", scope_reason))
     if compat_file_directories:
         arguments.append("--compat-file-directories")
+
+
+def _append_resource_timing(
+    arguments: list[str],
+    resource_class: str | None,
+    resource_id: str | None,
+    expected_duration_seconds: int | None,
+    requested_hard_stop_duration_seconds: int | None,
+) -> None:
+    values = (
+        ("--resource-class", resource_class),
+        ("--resource-id", resource_id),
+        ("--expected-duration-seconds", expected_duration_seconds),
+        ("--requested-hard-stop-duration-seconds", requested_hard_stop_duration_seconds),
+    )
+    for option, value in values:
+        if value is not None:
+            arguments.extend((option, str(value)))
 
 
 def configured_skill_roots() -> list[Path]:
@@ -347,6 +366,8 @@ def create_server(
         agent: str,
         task: str,
         root_task_id: str,
+        work_item_id: str | None = None,
+        activity: str | None = None,
         files: list[str] | None = None,
         trees: list[str] | None = None,
         resources: list[str] | None = None,
@@ -358,22 +379,20 @@ def create_server(
         branch: str | None = None,
         worktree_path: str | None = None,
         base: str = "HEAD",
-        allow_recovery: bool = False,
+        resource_class: str | None = None,
+        resource_id: str | None = None,
+        expected_duration_seconds: int | None = None,
+        requested_hard_stop_duration_seconds: int | None = None,
         compat_file_directories: bool = False,
     ) -> ClaimCommandResult:
-        """Atomically acquire one file domain plus optional exclusive resources.
+        """Atomically acquire one work item, file domain, or timed resource.
 
-        Project-files excludes backlog and supports isolation only beneath the primary
+        Work-item scope uses work_item_id with activity work or update. Named resources
+        require complete timing evidence resolved against PROJECT.yaml. Project-files
+        excludes backlog and supports caller-requested isolation only beneath the primary
         worktree's canonical .worktrees/<claim-id> root, with backlog omitted through
-        worktree-specific sparse checkout. Backlog and all-files are primary-worktree-only.
-        The three broad selectors are mutually exclusive; project-files and all-files
-        require scope_reason. Schema-version-2 results return SHARED_CHECKOUT_ACQUIRED,
-        ISOLATED_CHECKOUT_ACQUIRED, CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED,
-        SHARED_CHECKOUT_REQUIRED, SHARED_CHECKOUT_RELEASE_REQUIRED,
-        ISOLATED_CHECKOUT_SETUP_REQUIRED, DIRTY_CHECKOUT_RECOVERY_AUTHORIZATION_REQUIRED,
-        DIRTY_CHECKOUT_RECOVERY_ACQUIRED, CLAIM_STATE_MIGRATION_BLOCKED, or a structured
-        rejection with the copied claim engine's stable exit code. Renamed outcomes also
-        carry legacy_outcome.
+        worktree-specific sparse checkout. Schema-version-2 results preserve the copied
+        claim engine's current outcomes, rejection fields, and exit codes.
         """
         arguments = [
             "--repo",
@@ -390,14 +409,16 @@ def create_server(
             "--base",
             base,
         ]
-        if parent_claim_id:
+        if parent_claim_id is not None:
             arguments.extend(("--parent-claim-id", parent_claim_id))
-        if branch:
+        if work_item_id is not None:
+            arguments.extend(("--work-item-id", work_item_id))
+        if activity is not None:
+            arguments.extend(("--activity", activity))
+        if branch is not None:
             arguments.extend(("--branch", branch))
-        if worktree_path:
+        if worktree_path is not None:
             arguments.extend(("--worktree-path", str(workspace_path(worktree_path))))
-        if allow_recovery:
-            arguments.append("--allow-recovery")
         _append_scope(
             arguments,
             files,
@@ -408,6 +429,13 @@ def create_server(
             all_files,
             scope_reason,
             compat_file_directories,
+        )
+        _append_resource_timing(
+            arguments,
+            resource_class,
+            resource_id,
+            expected_duration_seconds,
+            requested_hard_stop_duration_seconds,
         )
         return run_claim_command(arguments)
 
@@ -422,13 +450,17 @@ def create_server(
         backlog: _BacklogScope = False,
         all_files: _AllFilesScope = False,
         scope_reason: _ScopeReason = None,
+        resource_class: str | None = None,
+        resource_id: str | None = None,
+        expected_duration_seconds: int | None = None,
+        requested_hard_stop_duration_seconds: int | None = None,
         compat_file_directories: bool = False,
     ) -> ClaimCommandResult:
         """Atomically add same-domain scope without weakening existing ownership.
 
-        Backlog-domain or all-files extension from an isolated claim returns
-        SHARED_CHECKOUT_REQUIRED. Mixed project/backlog extension returns structured
-        INVALID_SCOPE; project-files and all-files require scope_reason.
+        A work-item claim cannot add operational scope. A named resource extension requires
+        complete timing evidence. Primary-only scope from a linked claim returns
+        SHARED_CHECKOUT_REQUIRED; invalid mixed scope leaves the registry unchanged.
         """
         arguments = [
             "--repo",
@@ -448,7 +480,34 @@ def create_server(
             scope_reason,
             compat_file_directories,
         )
+        _append_resource_timing(
+            arguments,
+            resource_class,
+            resource_id,
+            expected_duration_seconds,
+            requested_hard_stop_duration_seconds,
+        )
         return run_claim_command(arguments)
+
+    @mcp.tool
+    def claim_extend_deadline(
+        repository: str,
+        claim_id: str,
+        requested_hard_stop_duration_seconds: int,
+        extension_evidence: str,
+    ) -> ClaimCommandResult:
+        """Extend one configured resource hard stop with bounded evidence."""
+        return run_claim_command([
+            "--repo",
+            str(workspace_path(repository)),
+            "extend-deadline",
+            "--claim-id",
+            claim_id,
+            "--requested-hard-stop-duration-seconds",
+            str(requested_hard_stop_duration_seconds),
+            "--extension-evidence",
+            extension_evidence,
+        ])
 
     @mcp.tool
     def claim_heartbeat(repository: str, claim_id: str) -> ClaimCommandResult:
@@ -458,8 +517,13 @@ def create_server(
         )
 
     @mcp.tool
-    def claim_release(repository: str, claim_id: str, no_change: bool = False) -> ClaimCommandResult:
-        """Release a clean claim, including the exact drain-only claim during legacy rollout."""
+    def claim_release(
+        repository: str,
+        claim_id: str,
+        disposition: str | None = None,
+        blocker_reference: str | None = None,
+    ) -> ClaimCommandResult:
+        """Release one exact claim, including a disposition for work-item ownership."""
         arguments = [
             "--repo",
             str(workspace_path(repository)),
@@ -467,9 +531,16 @@ def create_server(
             "--claim-id",
             claim_id,
         ]
-        if no_change:
-            arguments.append("--no-change")
+        if disposition is not None:
+            arguments.extend(("--disposition", disposition))
+        if blocker_reference is not None:
+            arguments.extend(("--blocker-reference", blocker_reference))
         return run_claim_command(arguments)
+
+    @mcp.tool
+    def claim_reset(repository: str) -> ClaimCommandResult:
+        """Replace the live registry with an empty claim list under its exact lock."""
+        return run_claim_command(["--repo", str(workspace_path(repository)), "reset"])
 
     @mcp.tool
     def claim_maintain_journal(repository: str, hot_days: int = 2) -> ClaimCommandResult:

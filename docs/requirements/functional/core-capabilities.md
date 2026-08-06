@@ -2,15 +2,17 @@
 
 ## Claims
 
-- The service exposes structured operations for claim status, acquisition, extension, heartbeat, release, journal maintenance, and contention reporting.
+- The service exposes structured operations for claim status, acquisition, extension, deadline extension, heartbeat, release, reset, journal maintenance, and contention reporting.
 - MCP and CLI claim operations preserve the stable outcomes and exit-code semantics of the existing `agent-claim` command.
 - Claims from primary and linked worktrees coordinate through one registry beneath the primary worktree's ignored `.codex/agent-claim` directory.
 - Read-only status and reporting do not create absent state. Empty legacy state migrates recoverably on the first mutation; live or contradictory legacy state produces a structured non-mutating stop except for exact live-claim release.
-- Claim mutations append diagnostic events without making journal availability part of ownership safety.
+- Work-item claims contend by exact provider ID, preserve `work_item_id` and `activity`, and require a terminal release disposition.
+- Named resource claims require configured timing evidence, calculate deadline status, and support evidenced hard-stop extension within policy.
+- Claim mutations append diagnostic events; release rolls back its registry removal if its required release event cannot be persisted.
 - Claims distinguish project-files, backlog, and all-files ownership. Project-files excludes backlog; backlog and all-files are primary-worktree-only.
 - Explicit paths derive one file domain. Mixed project/backlog paths and cross-domain extension fail atomically with structured guidance.
 - Eligible isolated project claims use the canonical ignored `.worktrees/<claim-id>` checkout and omit backlog through worktree-specific sparse checkout.
-- Recovery and release evaluate owned-domain status while preserving unchanged out-of-domain dirtiness; later out-of-domain status or commit changes reject release with exact path diagnostics.
+- Release removes only the exact named claim without inspecting Git or delivery state. Reports reconstruct versioned work-item activity and retain legacy-history diagnostics.
 
 ## Verification
 

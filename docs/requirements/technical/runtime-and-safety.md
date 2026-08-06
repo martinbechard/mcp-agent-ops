@@ -12,7 +12,8 @@
 - Support claim coordination and ordinary stdio MCP operation on POSIX and Windows without a compatibility subsystem.
 - Keep broad claim-domain selection explicit and mutually exclusive; never infer all-files from a repository root argument.
 - Derive isolated checkout locations beneath the primary worktree, require the operational root to be ignored, and configure sparse checkout before populating files.
-- Persist the selected file domain plus out-of-domain baseline evidence so release cannot absorb or silently overlook another domain's changes.
+- Keep work-item, path, and resource scope independent, and validate each public combination before registry mutation.
+- Resolve configured resource deadlines from `PROJECT.yaml` and reject incomplete, mismatched, or over-maximum requests atomically.
 - Keep authoritative claim state on disk so separate stdio server processes coordinate correctly.
 - Permit claim operations against unrelated repositories to run concurrently within one server process.
 - Keep catalog snapshots immutable for readers and atomically replace them only through explicit refresh.

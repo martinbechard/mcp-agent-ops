@@ -7,14 +7,16 @@ The server intentionally publishes small named operations so an LLM supplies dat
 | Tool | Required arguments | Purpose |
 |---|---|---|
 | `claim_status` | `repository` | Read the authoritative live registry. |
-| `claim_acquire` | `repository`, `claim_id`, `agent`, `task`, `root_task_id` | Acquire one project-files, backlog, all-files, explicit-path domain, plus optional resources. |
-| `claim_extend` | `repository`, `claim_id` | Add newly discovered same-domain scope atomically. |
+| `claim_acquire` | `repository`, `claim_id`, `agent`, `task`, `root_task_id` | Acquire one work-item activity, file domain, or policy-bounded resource. |
+| `claim_extend` | `repository`, `claim_id` | Add newly discovered path or timed-resource scope atomically. |
+| `claim_extend_deadline` | `repository`, `claim_id`, `requested_hard_stop_duration_seconds`, `extension_evidence` | Extend one resource hard stop within configured policy. |
 | `claim_heartbeat` | `repository`, `claim_id` | Refresh an active heartbeat. |
-| `claim_release` | `repository`, `claim_id` | Release a clean committed or explicit no-change claim. |
+| `claim_release` | `repository`, `claim_id` | Release one exact claim; work-item claims also require `disposition`. |
+| `claim_reset` | `repository` | Replace the live registry with an empty claim list under its lock. |
 | `claim_maintain_journal` | `repository` | Retain the hot UTC window and archive older complete days. |
 | `claim_report` | `repository` | Return structured contention and lifecycle metrics. |
 
-Claim results contain `exit_code` and the copied engine's structured `result`. This source checkout advertises result schema version 2 through the claim tool descriptions. The result outcome is authoritative and includes `legacy_outcome` only when the canonical name replaces a prior result name. Every checkout resolves the reported registry path beneath the primary worktree's `.codex/agent-claim` directory. Read-only status and reporting keep absent state write-free. Successful calls can have different outcomes, and unsuccessful ownership attempts such as `CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED` are valid structured results rather than protocol failures. Clients must capability-gate schema version 2 rather than infer it from a package version; published release 0.4.0 predates this contract.
+Claim results contain `exit_code` and the copied engine's structured `result`. Result schema version 2 is authoritative and includes `legacy_outcome` only when the canonical name replaces a prior result name. Every checkout resolves the reported registry path beneath the primary worktree's `.codex/agent-claim` directory. Read-only status and reporting keep absent state write-free. Unsuccessful ownership attempts such as `CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED` are valid structured results rather than protocol failures.
 
 | Canonical outcome | Meaning and next action | Legacy outcome | Exit code |
 |---|---|---|---|
@@ -32,13 +34,15 @@ Unlisted explicit outcomes keep their existing names and omit `legacy_outcome`. 
 
 The broad file selectors are mutually exclusive:
 
-- `project_files` owns the repository file tree except `backlog` and ignored operational worktree state. It requires `scope_reason` and may use a canonical `.worktrees/<claim-id>` checkout when another independent project claim is active.
+- `project_files` owns the repository file tree except `backlog` and ignored operational worktree state. It requires `scope_reason` and may use a caller-requested canonical `.worktrees/<claim-id>` checkout.
 - `backlog` owns the complete backlog subtree and is primary-worktree-only.
 - `all_files` explicitly owns both domains, requires `scope_reason`, and is primary-worktree-only.
 
-Explicit backlog files and trees remain compatible inputs and are reported with `compat_backlog_path`. A request mixing project and backlog paths returns `INVALID_SCOPE` with reason `mixed_file_domains`. Backlog or all-files acquisition while the shared checkout is occupied returns `SHARED_CHECKOUT_RELEASE_REQUIRED`; the same request from another checkout when the shared checkout is available, including backlog-domain extension from an isolated claim, returns `SHARED_CHECKOUT_REQUIRED`. Both retain exit code 3 and leave the registry unchanged. Release rejects post-acquisition out-of-domain worktree changes as `out_of_domain_changes` and out-of-domain committed paths as `out_of_domain_commit`.
+Explicit backlog files and trees remain compatible inputs and are reported with `compat_backlog_path`. A request mixing project and backlog paths returns `INVALID_SCOPE` with reason `mixed_file_domains`. Primary-only scope requested from a linked checkout returns `SHARED_CHECKOUT_REQUIRED` and leaves the registry unchanged. Release removes only the exact named claim and does not inspect Git or delivery state.
 
-The first mutating operation migrates only an empty legacy Git-common-directory registry and preserves usable history. A live legacy registry permits exact release only. Contradictory dual state, incomplete recovery, or replaced legacy markers return `CLAIM_STATE_MIGRATION_BLOCKED` without mutation or helper fallback.
+Work-item acquisition supplies `work_item_id` with activity `work` or `update` and cannot combine that scope with file or resource ownership. Work-item release requires disposition `done`, `blocked`, or `handoff`; only `blocked` may include a bounded `blocker_reference`. Resource acquisition or extension supplies one resource plus `resource_class`, `resource_id`, `expected_duration_seconds`, and `requested_hard_stop_duration_seconds`. The project deadline policy controls the accepted maximum and cleanup grace. Reports include a schema-version-one `work_items` section with deterministic activity segments and diagnostics.
+
+The first mutating operation migrates only an empty legacy Git-common-directory registry and preserves usable history. Canonical `state.json` contains `schema_version`, `state_layout_version: 2`, `migration_status`, and `origin`. Successful legacy migration leaves a registry directory with child `state.json` and a regular event marker file using the exact command-helper payloads. A live legacy registry permits exact release only. Contradictory dual state, incomplete migration, or replaced legacy markers return `CLAIM_STATE_MIGRATION_BLOCKED` without mutation or helper fallback.
 
 Repository and worktree paths must be absolute and resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`.
 

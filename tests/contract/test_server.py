@@ -30,6 +30,30 @@ def _initialize_repository(path: Path) -> None:
     (path / "backlog").mkdir()
     (path / "README.md").write_text("baseline\n", encoding="utf-8")
     (path / "backlog" / "item.md").write_text("queued\n", encoding="utf-8")
+    (path / "PROJECT.yaml").write_text(
+        yaml.safe_dump({
+            "resource_coordination": {
+                "selected": "agent-claim",
+                "deadline_policy": {
+                    "resource_classes": {
+                        class_id: {
+                            "maximum_duration_seconds": 3600,
+                            "cleanup_grace_seconds": 120,
+                        }
+                        for class_id in (
+                            "backlog-mutation",
+                            "main-integration",
+                            "browser-server",
+                            "database-port",
+                            "live-model-evaluation",
+                        )
+                    },
+                    "resource_overrides": {},
+                },
+            }
+        }),
+        encoding="utf-8",
+    )
     for arguments in (
         ("init",),
         ("config", "user.email", "test@example.invalid"),
@@ -66,8 +90,10 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
             "claim_status",
             "claim_acquire",
             "claim_extend",
+            "claim_extend_deadline",
             "claim_heartbeat",
             "claim_release",
+            "claim_reset",
             "claim_maintain_journal",
             "claim_report",
             "verify_yaml",
@@ -82,20 +108,106 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
             "skill_validate",
             "detect_technology_skills",
         } <= names
-        claim_tools = {tool.name: tool for tool in tools if tool.name in {"claim_acquire", "claim_extend"}}
-        for tool in claim_tools.values():
+        claim_tools = {tool.name: tool for tool in tools if tool.name.startswith("claim_")}
+        expected_claim_properties = {
+            "claim_status": {"repository"},
+            "claim_acquire": {
+                "repository",
+                "claim_id",
+                "agent",
+                "task",
+                "root_task_id",
+                "work_item_id",
+                "activity",
+                "files",
+                "trees",
+                "resources",
+                "project_files",
+                "backlog",
+                "all_files",
+                "scope_reason",
+                "parent_claim_id",
+                "branch",
+                "worktree_path",
+                "base",
+                "resource_class",
+                "resource_id",
+                "expected_duration_seconds",
+                "requested_hard_stop_duration_seconds",
+                "compat_file_directories",
+            },
+            "claim_extend": {
+                "repository",
+                "claim_id",
+                "files",
+                "trees",
+                "resources",
+                "project_files",
+                "backlog",
+                "all_files",
+                "scope_reason",
+                "resource_class",
+                "resource_id",
+                "expected_duration_seconds",
+                "requested_hard_stop_duration_seconds",
+                "compat_file_directories",
+            },
+            "claim_extend_deadline": {
+                "repository",
+                "claim_id",
+                "requested_hard_stop_duration_seconds",
+                "extension_evidence",
+            },
+            "claim_heartbeat": {"repository", "claim_id"},
+            "claim_release": {
+                "repository",
+                "claim_id",
+                "disposition",
+                "blocker_reference",
+            },
+            "claim_reset": {"repository"},
+            "claim_maintain_journal": {"repository", "hot_days"},
+            "claim_report": {"repository", "since"},
+        }
+        assert set(claim_tools) == set(expected_claim_properties)
+        for tool_name, expected_properties in expected_claim_properties.items():
+            assert set(claim_tools[tool_name].inputSchema["properties"]) == expected_properties
+        for tool in (claim_tools["claim_acquire"], claim_tools["claim_extend"]):
             properties = tool.inputSchema["properties"]
             assert properties["project_files"]["type"] == "boolean"
             assert properties["backlog"]["type"] == "boolean"
             assert properties["all_files"]["type"] == "boolean"
             assert ".worktrees/<claim-id>" in properties["project_files"]["description"]
             assert "backlog omitted by sparse checkout" in properties["project_files"]["description"]
-            assert "SHARED_CHECKOUT_RELEASE_REQUIRED" in properties["backlog"]["description"]
+            assert "SHARED_CHECKOUT_REQUIRED" in properties["backlog"]["description"]
             assert "requires scope_reason" in properties["all_files"]["description"]
-        assert "SHARED_CHECKOUT_ACQUIRED" in (claim_tools["claim_acquire"].description or "")
+        assert "work_item_id" in (claim_tools["claim_acquire"].description or "")
         assert ".worktrees/<claim-id>" in (claim_tools["claim_acquire"].description or "")
         assert "backlog omitted" in (claim_tools["claim_acquire"].description or "")
-        assert "all-files extension" in (claim_tools["claim_extend"].description or "")
+        assert "work-item claim" in (claim_tools["claim_extend"].description or "")
+        acquire_properties = claim_tools["claim_acquire"].inputSchema["properties"]
+        assert {
+            "work_item_id",
+            "activity",
+            "resource_class",
+            "resource_id",
+            "expected_duration_seconds",
+            "requested_hard_stop_duration_seconds",
+        } <= set(acquire_properties)
+        assert {
+            "resource_class",
+            "resource_id",
+            "expected_duration_seconds",
+            "requested_hard_stop_duration_seconds",
+        } <= set(claim_tools["claim_extend"].inputSchema["properties"])
+        assert {
+            "requested_hard_stop_duration_seconds",
+            "extension_evidence",
+        } <= set(claim_tools["claim_extend_deadline"].inputSchema["properties"])
+        assert {"disposition", "blocker_reference"} <= set(
+            claim_tools["claim_release"].inputSchema["properties"]
+        )
+        assert "no_change" not in claim_tools["claim_release"].inputSchema["properties"]
 
         status = await client.call_tool("claim_status", {"repository": str(repository)})
         assert status.structured_content["exit_code"] == 0
@@ -104,77 +216,67 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
         report = await client.call_tool("claim_report", {"repository": str(repository)})
         assert report.structured_content["exit_code"] == 0
         assert report.structured_content["result"]["schema_version"] == 2
+        assert report.structured_content["result"]["work_items"]["schema_version"] == 1
 
         acquired = await client.call_tool(
             "claim_acquire",
             {
                 "repository": str(repository),
-                "claim_id": "contract-claim",
+                "claim_id": "work-item-claim",
                 "agent": "contract-test",
                 "task": "contract-test",
-                "root_task_id": "contract-claim",
-                "files": ["README.md"],
+                "root_task_id": "work-item-claim",
+                "work_item_id": "provider#42",
+                "activity": "work",
             },
         )
         assert acquired.structured_content["result"]["outcome"] == "SHARED_CHECKOUT_ACQUIRED"
         assert acquired.structured_content["result"]["legacy_outcome"] == "PRIMARY"
+        assert acquired.structured_content["result"]["claim"]["work_item_id"] == "provider#42"
+        assert acquired.structured_content["result"]["claim"]["activity"] == "work"
         released = await client.call_tool(
             "claim_release",
-            {"repository": str(repository), "claim_id": "contract-claim", "no_change": True},
+            {
+                "repository": str(repository),
+                "claim_id": "work-item-claim",
+                "disposition": "blocked",
+                "blocker_reference": "dependency-7",
+            },
         )
         assert released.structured_content["result"]["outcome"] == "RELEASED"
+        assert released.structured_content["result"]["disposition"] == "blocked"
+        assert released.structured_content["result"]["blocker_reference"] == "dependency-7"
 
-        project_claim = await client.call_tool(
+        resource_claim = await client.call_tool(
             "claim_acquire",
             {
                 "repository": str(repository),
-                "claim_id": "project-domain",
+                "claim_id": "resource-claim",
                 "agent": "contract-test",
-                "task": "project-domain",
-                "root_task_id": "project-domain",
-                "project_files": True,
-                "scope_reason": "project implementation",
+                "task": "resource deadline",
+                "root_task_id": "resource-claim",
+                "resources": ["browser-test:primary"],
+                "resource_class": "browser-server",
+                "resource_id": "browser-test:primary",
+                "expected_duration_seconds": 300,
+                "requested_hard_stop_duration_seconds": 600,
             },
         )
-        assert project_claim.structured_content["result"]["claim"]["file_domain"] == "project_files"
-        backlog_wait = await client.call_tool(
-            "claim_acquire",
+        deadline = resource_claim.structured_content["result"]["claim"]["deadline"]
+        assert deadline["requested_hard_stop_duration_seconds"] == 600
+        extended = await client.call_tool(
+            "claim_extend_deadline",
             {
                 "repository": str(repository),
-                "claim_id": "backlog-domain",
-                "agent": "contract-test",
-                "task": "backlog-domain",
-                "root_task_id": "backlog-domain",
-                "backlog": True,
+                "claim_id": "resource-claim",
+                "requested_hard_stop_duration_seconds": 900,
+                "extension_evidence": "focused compatibility check remains",
             },
         )
-        assert backlog_wait.structured_content["exit_code"] == 3
-        assert (
-            backlog_wait.structured_content["result"]["outcome"]
-            == "SHARED_CHECKOUT_RELEASE_REQUIRED"
-        )
-        assert backlog_wait.structured_content["result"]["legacy_outcome"] == "PRIMARY_REQUIRED"
-        primary_resource_wait = await client.call_tool(
-            "claim_acquire",
-            {
-                "repository": str(repository),
-                "claim_id": "primary-resource",
-                "agent": "contract-test",
-                "task": "primary resource",
-                "root_task_id": "contract-test",
-                "resources": ["git-index:primary"],
-                "branch": "codex/primary-resource",
-            },
-        )
-        assert primary_resource_wait.structured_content["exit_code"] == 3
-        assert (
-            primary_resource_wait.structured_content["result"]["outcome"]
-            == "SHARED_CHECKOUT_RELEASE_REQUIRED"
-        )
-        assert not (repository / ".worktrees" / "primary-resource").exists()
+        assert extended.structured_content["result"]["outcome"] == "DEADLINE_EXTENDED"
         await client.call_tool(
             "claim_release",
-            {"repository": str(repository), "claim_id": "project-domain", "no_change": True},
+            {"repository": str(repository), "claim_id": "resource-claim"},
         )
         invalid_domains = await client.call_tool(
             "claim_acquire",
@@ -210,8 +312,10 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
         assert all_files.structured_content["result"]["claim"]["file_domain"] == "all_files"
         await client.call_tool(
             "claim_release",
-            {"repository": str(repository), "claim_id": "all-domains", "no_change": True},
+            {"repository": str(repository), "claim_id": "all-domains"},
         )
+        reset = await client.call_tool("claim_reset", {"repository": str(repository)})
+        assert reset.structured_content["result"]["outcome"] == "RESET"
 
         (repository / "invalid.yaml").write_text("same: one\nsame: two\n", encoding="utf-8")
         verified = await client.call_tool(
@@ -277,7 +381,7 @@ async def test_claim_mcp_and_cli_share_state_path_and_migration_stop(tmp_path: P
         mcp_stop = await client.call_tool("claim_status", {"repository": str(repository)})
     assert cli_stop_code == 3
     assert cli_stop["outcome"] == "CLAIM_STATE_MIGRATION_BLOCKED"
-    assert cli_stop["reason"] == "contradictory_dual_registry"
+    assert cli_stop["reason"] == "contradictory_dual_state"
     assert mcp_stop.structured_content == {"exit_code": 3, "result": cli_stop}
 
 
@@ -932,7 +1036,6 @@ async def test_server_audit_records_bounded_domain_outcomes(tmp_path: Path) -> N
             {
                 "repository": str(repository),
                 "claim_id": "audit-outcome",
-                "no_change": True,
             },
         )
 

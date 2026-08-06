@@ -99,7 +99,7 @@ def test_same_repository_claim_calls_preserve_one_authoritative_owner(tmp_path: 
     assert status.result["claims"][0]["claim_id"] in {"first", "second"}
 
 
-def test_primary_location_resource_requires_shared_checkout_release(tmp_path: Path) -> None:
+def test_resource_claim_requires_complete_deadline_evidence(tmp_path: Path) -> None:
     repository = tmp_path / "repository"
     _initialize_repository(repository)
     first = service.run_claim_command([
@@ -137,7 +137,7 @@ def test_primary_location_resource_requires_shared_checkout_release(tmp_path: Pa
     ])
 
     assert first.exit_code == 0
-    assert result.exit_code == 3
-    assert result.result["outcome"] == "SHARED_CHECKOUT_RELEASE_REQUIRED"
-    assert result.result["legacy_outcome"] == "PRIMARY_REQUIRED"
+    assert result.exit_code == 1
+    assert result.result["outcome"] == "INVALID_DEADLINE_POLICY"
+    assert result.result["rejection"]["reason"] == "resource_timing_required"
     assert not (repository / ".worktrees" / "resource").exists()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Coordinates claims, journaling, reporting, isolation, recovery, and domain-aware release.
+# Summary: Implements command-compatible claim ownership, deadlines, migration, release, and reporting.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
@@ -14,6 +14,7 @@ import json
 import math
 import os
 import re
+import stat
 import subprocess
 from collections import Counter
 from contextlib import contextmanager
@@ -21,40 +22,45 @@ from contextvars import ContextVar
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
-from typing import IO, Any, Iterator, Sequence
+from typing import Any, Iterator, Sequence, TextIO
 from uuid import uuid4
 
+import yaml
+
 from mcp_agent_ops.claims.locking import exclusive_text_file
+
 
 SUCCESS = 0
 ERROR = 1
 COORDINATION_REQUIRED_EXIT_CODE = 3
 ISOLATION_SETUP_EXIT_CODE = 4
-RECOVERY_AUTHORIZATION_EXIT_CODE = 5
 BACKLOG_ROOT_DIRECTORY = "backlog"
 WORKTREE_ROOT_DIRECTORY = ".worktrees"
 WORKTREE_IGNORE_PATTERN = "/.worktrees/"
+CLAIM_STATE_DIRECTORY = ".codex/agent-claim"
+CLAIM_STATE_IGNORE_PATTERN = "/.codex/agent-claim/"
 ISOLATED_SPARSE_CHECKOUT_PATTERNS = ("/*", "!/backlog/")
-PRIMARY_WORKTREE_RESOURCES = frozenset({"git-index:primary", "merge:integration:main"})
 REGISTRY_FILE_NAME = "agent-claims.json"
 EVENT_DIRECTORY_NAME = "agent-claim-events"
-CLAIM_STATE_REPOSITORY_PATH = ".codex/agent-claim"
-STATE_FILE_NAME = "state.json"
-MIGRATION_BACKUP_DIRECTORY_NAME = "migration-backup"
-LEGACY_BOUNDARY_FILE_NAME = "MIGRATED"
-LEGACY_REGISTRY_BOUNDARY_CONTENT = (
-    '{"migration":"primary-worktree-state-root","schema_version":1,"type":"registry"}\n'
-)
-LEGACY_EVENTS_BOUNDARY_CONTENT = (
-    '{"migration":"primary-worktree-state-root","schema_version":1,"type":"events"}\n'
-)
+STATE_MARKER_FILE_NAME = "state.json"
+STATE_LAYOUT_VERSION = 2
+STATE_MARKER_SCHEMA_VERSION = 1
 EVENT_SCHEMA_VERSION = 1
 RESULT_SCHEMA_VERSION = 2
 SUMMARY_SCHEMA_VERSION = 2
 REPORT_SCHEMA_VERSION = 2
+WORK_ITEM_REPORT_SCHEMA_VERSION = 1
 DEFAULT_HOT_DAYS = 2
 MAX_SCOPE_REASON_LENGTH = 200
 MAX_IDENTIFIER_LENGTH = 200
+MAX_EXTENSION_EVIDENCE_LENGTH = 1000
+_RESOURCE_DEADLINE_CLASS_IDS = (
+    "backlog-mutation",
+    "main-integration",
+    "browser-server",
+    "database-port",
+    "live-model-evaluation",
+)
 STALE_HEARTBEAT_HOURS = 24
 UTC_DAY_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2})\.jsonl$")
 SINCE_PATTERN = re.compile(r"^(\d+)([dh])$")
@@ -88,19 +94,25 @@ class _ScopeError(ValueError):
         self.reason = reason
 
 
-class _ClaimStateMigrationStop(RuntimeError):
-    def __init__(
-        self,
-        reason: str,
-        canonical_registry: Path,
-        legacy_registry: Path,
-        legacy_claim_ids: Sequence[str] = (),
-    ) -> None:
-        super().__init__(reason)
+class _DeadlineError(ValueError):
+    def __init__(self, message: str, field: str, reason: str) -> None:
+        super().__init__(message)
+        self.field = field
         self.reason = reason
-        self.canonical_registry = canonical_registry
-        self.legacy_registry = legacy_registry
-        self.legacy_claim_ids = list(legacy_claim_ids)
+
+
+class _WorkItemError(ValueError):
+    def __init__(self, message: str, field: str, reason: str) -> None:
+        super().__init__(message)
+        self.field = field
+        self.reason = reason
+
+
+class _ClaimStateError(RuntimeError):
+    def __init__(self, reason: str, message: str, **details: Any) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.details = details
 
 
 def _git(worktree: Path, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -139,18 +151,23 @@ def _canonical_worktree(repository: Path, claim_id: str) -> Path:
     return (_canonical_worktree_root(repository) / claim_id).resolve()
 
 
-def _claim_owns_primary_worktree(claim: dict[str, Any], primary_worktree: Path) -> bool:
-    if _scope_is_resource_only(_claim_scope(claim)):
-        return False
+def _checkout_topology(claim: dict[str, Any]) -> str | None:
+    topology = claim.get("checkout_topology")
+    if topology in {"primary", "linked"}:
+        return str(topology)
     worktree = claim.get("worktree")
     if isinstance(worktree, str):
-        return Path(worktree).resolve() == primary_worktree
-    return claim.get("mode") in {"primary", "recovery"}
-
-
-def _shared_checkout_is_claimed(repository: Path, claims: Sequence[dict[str, Any]]) -> bool:
-    primary_worktree = _primary_worktree(repository)
-    return any(_claim_owns_primary_worktree(claim, primary_worktree) for claim in claims)
+        worktree_path = Path(worktree).resolve()
+        try:
+            return "primary" if worktree_path == _primary_worktree(worktree_path) else "linked"
+        except (OSError, RuntimeError, subprocess.CalledProcessError):
+            pass
+    mode = claim.get("mode")
+    if mode == "isolated":
+        return "linked"
+    if mode in {"primary", "recovery"}:
+        return "primary"
+    return None
 
 
 def _worktree_root_is_ignored(repository: Path) -> bool:
@@ -172,379 +189,459 @@ def _claim_id_is_safe_worktree_component(claim_id: str) -> bool:
     return bool(WORKTREE_COMPONENT_PATTERN.fullmatch(claim_id))
 
 
-def _claim_state_root(repository: Path) -> Path:
-    return (_primary_worktree(repository) / CLAIM_STATE_REPOSITORY_PATH).resolve()
+def _state_root(repository: Path) -> Path:
+    return (_primary_worktree(repository) / CLAIM_STATE_DIRECTORY).resolve()
 
 
 def _registry_path(repository: Path) -> Path:
-    return _claim_state_root(repository) / REGISTRY_FILE_NAME
-
-
-def _state_file_path(repository: Path) -> Path:
-    return _claim_state_root(repository) / STATE_FILE_NAME
+    return _state_root(repository) / REGISTRY_FILE_NAME
 
 
 def _legacy_registry_path(repository: Path) -> Path:
     return _git_common_directory(repository) / REGISTRY_FILE_NAME
 
 
-def _legacy_event_root(repository: Path) -> Path:
-    return _git_common_directory(repository) / EVENT_DIRECTORY_NAME
+def _state_marker_path(repository: Path) -> Path:
+    return _state_root(repository) / STATE_MARKER_FILE_NAME
 
 
-def _migration_backup_root(repository: Path) -> Path:
-    return _claim_state_root(repository) / MIGRATION_BACKUP_DIRECTORY_NAME
-
-
-def _legacy_registry_backup(repository: Path) -> Path:
-    return _migration_backup_root(repository) / REGISTRY_FILE_NAME
-
-
-def _legacy_events_backup(repository: Path) -> Path:
-    return _migration_backup_root(repository) / EVENT_DIRECTORY_NAME
-
-
-def _migration_state(repository: Path) -> dict[str, Any] | None:
-    path = _state_file_path(repository)
-    if not path.is_file():
-        return None
+def _registry_payload(path: Path) -> dict[str, Any]:
     try:
-        state = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    migration = state.get("legacy_migration") if isinstance(state, dict) else None
-    if (
-        state.get("schema_version") != 1
-        or not isinstance(migration, dict)
-        or migration.get("completed") is not True
-        or migration.get("origin") not in {"absent", "migrated"}
-        or migration.get("state_root") != CLAIM_STATE_REPOSITORY_PATH
-    ):
-        return None
-    return state
-
-
-def _legacy_registry_is_boundary(path: Path) -> bool:
-    marker = path / LEGACY_BOUNDARY_FILE_NAME
-    return (
-        path.is_dir()
-        and marker.is_file()
-        and marker.read_text(encoding="utf-8") == LEGACY_REGISTRY_BOUNDARY_CONTENT
-    )
-
-
-def _legacy_registry_is_transition_marker(path: Path) -> bool:
-    return path.is_file() and path.read_text(encoding="utf-8") == LEGACY_REGISTRY_BOUNDARY_CONTENT
-
-
-def _legacy_events_are_boundary(path: Path) -> bool:
-    return path.is_file() and path.read_text(encoding="utf-8") == LEGACY_EVENTS_BOUNDARY_CONTENT
-
-
-def _registry_data(path: Path) -> dict[str, Any]:
-    raw_registry = path.read_text(encoding="utf-8")
-    data = json.loads(raw_registry) if raw_registry else {"claims": []}
-    if not isinstance(data.get("claims"), list):
-        raise ValueError(f"Invalid claim registry: {path}")
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw) if raw else {"claims": []}
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise _ClaimStateError(
+            "invalid_registry",
+            f"Claim registry is unreadable or invalid: {path}: {error}",
+            registry=str(path),
+        ) from error
+    if not isinstance(data, dict) or not isinstance(data.get("claims"), list):
+        raise _ClaimStateError(
+            "invalid_registry",
+            f"Claim registry has an invalid claims field: {path}",
+            registry=str(path),
+        )
     return data
 
 
-def _claim_ids(path: Path) -> list[str]:
-    return [str(claim.get("claim_id")) for claim in _registry_data(path)["claims"]]
-
-
-def _migration_stop(
-    repository: Path,
-    reason: str,
-    legacy_claim_ids: Sequence[str] = (),
-) -> _ClaimStateMigrationStop:
-    return _ClaimStateMigrationStop(
-        reason,
-        _registry_path(repository),
-        _legacy_registry_path(repository),
-        legacy_claim_ids,
-    )
-
-
-def _legacy_registry_claim_ids(repository: Path) -> list[str]:
-    path = _legacy_registry_path(repository)
+def _state_marker(repository: Path) -> dict[str, Any] | None:
+    marker_path = _state_marker_path(repository)
+    if not marker_path.exists():
+        return None
+    try:
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise _ClaimStateError(
+            "invalid_state_marker",
+            f"Claim-state marker is unreadable or invalid: {marker_path}: {error}",
+            marker=str(marker_path),
+        ) from error
     if (
-        not path.exists()
-        or _legacy_registry_is_boundary(path)
-        or _legacy_registry_is_transition_marker(path)
+        not isinstance(marker, dict)
+        or marker.get("schema_version") != STATE_MARKER_SCHEMA_VERSION
+        or marker.get("state_layout_version") != STATE_LAYOUT_VERSION
+        or marker.get("migration_status") not in {"in_progress", "complete"}
+        or marker.get("origin") not in {"fresh", "legacy"}
     ):
-        return []
-    if not path.is_file():
-        raise _migration_stop(repository, "invalid_legacy_registry_boundary")
-    return _claim_ids(path)
-
-
-def _canonical_claim_ids(repository: Path) -> list[str]:
-    path = _registry_path(repository)
-    if not path.exists():
-        return []
-    if not path.is_file():
-        raise _migration_stop(repository, "invalid_canonical_registry")
-    return _claim_ids(path)
-
-
-def _preflight_completed_migration(repository: Path, state: dict[str, Any]) -> None:
-    origin = state["legacy_migration"]["origin"]
-    legacy_registry = _legacy_registry_path(repository)
-    legacy_events = _legacy_event_root(repository)
-    if origin == "absent":
-        if legacy_registry.exists() or legacy_events.exists():
-            raise _migration_stop(repository, "legacy_state_appeared_after_fresh_rollout")
-        return
-    if not _legacy_registry_is_boundary(legacy_registry) or not _legacy_events_are_boundary(legacy_events):
-        raise _migration_stop(repository, "legacy_boundary_changed_after_migration")
-
-
-def _preflight_claim_state(repository: Path, command: str, claim_id: str | None) -> None:
-    state = _migration_state(repository)
-    if _state_file_path(repository).exists() and state is None:
-        raise _migration_stop(repository, "invalid_canonical_state_marker")
-    if state is not None:
-        _preflight_completed_migration(repository, state)
-        return
-    canonical_claim_ids = _canonical_claim_ids(repository)
-    legacy_claim_ids = _legacy_registry_claim_ids(repository)
-    if canonical_claim_ids and legacy_claim_ids:
-        raise _migration_stop(repository, "contradictory_dual_registry", legacy_claim_ids)
-    if legacy_claim_ids and not (command == "release" and claim_id in legacy_claim_ids):
-        raise _migration_stop(
-            repository,
-            "legacy_live_claim_requires_release",
-            legacy_claim_ids,
+        raise _ClaimStateError(
+            "invalid_state_marker",
+            f"Claim-state marker has an unsupported contract: {marker_path}",
+            marker=str(marker_path),
         )
+    return marker
 
 
-def _write_state(repository: Path, origin: str) -> None:
-    state = {
-        "schema_version": 1,
-        "legacy_migration": {
-            "completed": True,
-            "origin": origin,
-            "state_root": CLAIM_STATE_REPOSITORY_PATH,
-        },
+def _write_state_marker(repository: Path, status: str, origin: str) -> None:
+    marker = {
+        "schema_version": STATE_MARKER_SCHEMA_VERSION,
+        "state_layout_version": STATE_LAYOUT_VERSION,
+        "migration_status": status,
+        "origin": origin,
     }
     _atomic_write(
-        _state_file_path(repository),
-        (json.dumps(state, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        _state_marker_path(repository),
+        (json.dumps(marker, indent=2, sort_keys=True) + "\n").encode("utf-8"),
     )
 
 
-def _write_new_file(path: Path, content: bytes) -> None:
+def _create_empty_registry(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     try:
-        os.write(descriptor, content)
+        os.write(descriptor, b'{\n  "claims": []\n}\n')
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
 
 
-def _write_legacy_registry_transition_marker(registry_file: IO[str]) -> None:
-    registry_file.seek(0)
-    registry_file.write(LEGACY_REGISTRY_BOUNDARY_CONTENT)
-    registry_file.truncate()
-    registry_file.flush()
-    os.fsync(registry_file.fileno())
+def _legacy_marker_payload(kind: str) -> bytes:
+    marker = {
+        "schema_version": STATE_MARKER_SCHEMA_VERSION,
+        "state_layout_version": STATE_LAYOUT_VERSION,
+        "migrated": kind,
+    }
+    return (json.dumps(marker, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
-def _install_legacy_registry_boundary(repository: Path) -> None:
-    legacy_registry = _legacy_registry_path(repository)
-    if _legacy_registry_is_boundary(legacy_registry):
+def _legacy_registry_is_marker(path: Path) -> bool:
+    marker = path / STATE_MARKER_FILE_NAME
+    try:
+        return path.is_dir() and marker.is_file() and marker.read_bytes() == _legacy_marker_payload("registry")
+    except OSError:
+        return False
+
+
+def _legacy_events_is_marker(path: Path) -> bool:
+    try:
+        return path.is_file() and path.read_bytes() == _legacy_marker_payload("events")
+    except OSError:
+        return False
+
+
+def _install_legacy_registry_marker(path: Path) -> None:
+    if _legacy_registry_is_marker(path):
         return
-    if legacy_registry.exists():
-        if not _legacy_registry_is_transition_marker(legacy_registry):
-            raise _migration_stop(repository, "invalid_legacy_registry_boundary")
-        legacy_registry.unlink()
-    legacy_registry.mkdir()
-    _write_new_file(
-        legacy_registry / LEGACY_BOUNDARY_FILE_NAME,
-        LEGACY_REGISTRY_BOUNDARY_CONTENT.encode("utf-8"),
-    )
+    if os.path.lexists(path):
+        raise _ClaimStateError(
+            "contradictory_dual_state",
+            f"Legacy registry path has an unexpected type or content: {path}",
+            legacy_registry=str(path),
+        )
+    path.mkdir()
+    (path / STATE_MARKER_FILE_NAME).write_bytes(_legacy_marker_payload("registry"))
 
 
-def _install_legacy_events_boundary(repository: Path) -> None:
-    legacy_events = _legacy_event_root(repository)
-    backup_events = _legacy_events_backup(repository)
-    if _legacy_events_are_boundary(legacy_events):
+def _install_legacy_events_marker(path: Path) -> None:
+    if _legacy_events_is_marker(path):
         return
-    if legacy_events.exists():
-        if not legacy_events.is_dir():
-            raise _migration_stop(repository, "invalid_legacy_history_boundary")
-        if backup_events.exists():
-            raise _migration_stop(repository, "contradictory_dual_legacy_history")
-        backup_events.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(legacy_events, backup_events)
-    _write_new_file(legacy_events, LEGACY_EVENTS_BOUNDARY_CONTENT.encode("utf-8"))
+    if os.path.lexists(path):
+        raise _ClaimStateError(
+            "contradictory_dual_state",
+            f"Legacy event path has an unexpected type or content: {path}",
+            legacy_events=str(path),
+        )
+    path.write_bytes(_legacy_marker_payload("events"))
 
 
-def _materialize_event_plan(plan: Sequence[tuple[Path, Path, bytes]]) -> None:
-    for _source, destination, content in plan:
-        if destination.exists():
-            if destination.read_bytes() != content:
-                raise ValueError(f"Contradictory canonical claim history: {destination}")
-            continue
-        _write_new_file(destination, content)
-
-
-def _prepare_canonical_registry(repository: Path, *, allow_live: bool = False) -> Path:
+@contextmanager
+def _migration_lock(repository: Path) -> Iterator[None]:
     registry_path = _registry_path(repository)
-    registry_path.parent.mkdir(parents=True, exist_ok=True)
-    if registry_path.exists():
-        if (
-            not registry_path.is_file()
-            or (_claim_ids(registry_path) and not allow_live)
-        ):
-            raise _migration_stop(repository, "contradictory_canonical_registry")
-        return registry_path
-    try:
-        _write_new_file(registry_path, b'{"claims": []}\n')
-    except FileExistsError:
-        if not registry_path.is_file() or (_claim_ids(registry_path) and not allow_live):
-            raise _migration_stop(repository, "contradictory_canonical_registry") from None
-    return registry_path
-
-
-def _migrate_empty_legacy_state(repository: Path) -> Path:
-    legacy_registry = _legacy_registry_path(repository)
-    if _legacy_registry_is_boundary(legacy_registry):
-        registry_path = _prepare_canonical_registry(repository)
+    if not registry_path.exists():
         try:
-            _materialize_event_plan(_event_migration_plan(repository))
-            _install_legacy_events_boundary(repository)
-        except (OSError, ValueError) as error:
-            raise _migration_stop(repository, "legacy_migration_interrupted") from error
-        _write_state(repository, "migrated")
-        return registry_path
-
-    if _legacy_registry_is_transition_marker(legacy_registry) or not legacy_registry.exists():
-        if not _legacy_registry_backup(repository).is_file():
-            raise _migration_stop(repository, "invalid_legacy_registry_boundary")
-        registry_path = _prepare_canonical_registry(repository)
-        try:
-            _materialize_event_plan(_event_migration_plan(repository))
-            _install_legacy_registry_boundary(repository)
-            _install_legacy_events_boundary(repository)
-        except (OSError, ValueError) as error:
-            raise _migration_stop(repository, "legacy_migration_interrupted") from error
-        _write_state(repository, "migrated")
-        return registry_path
-
-    if not legacy_registry.is_file():
-        raise _migration_stop(repository, "invalid_legacy_registry_boundary")
-    with exclusive_text_file(legacy_registry) as legacy_file:
-        legacy_file.seek(0)
-        raw_registry = legacy_file.read()
-        try:
-            data = json.loads(raw_registry) if raw_registry else {"claims": []}
-        except json.JSONDecodeError as error:
-            raise _migration_stop(repository, "invalid_legacy_registry") from error
-        if not isinstance(data, dict) or not isinstance(data.get("claims"), list):
-            raise _migration_stop(repository, "invalid_legacy_registry")
-        claim_ids = [str(claim.get("claim_id")) for claim in data["claims"]]
-        if claim_ids:
-            raise _migration_stop(repository, "legacy_live_claim_requires_release", claim_ids)
-
-        backup_registry = _legacy_registry_backup(repository)
-        if backup_registry.exists():
-            if backup_registry.read_text(encoding="utf-8") != raw_registry:
-                raise _migration_stop(repository, "contradictory_legacy_registry_backup")
-        else:
-            _write_new_file(backup_registry, raw_registry.encode("utf-8"))
-        registry_path = _prepare_canonical_registry(repository)
-        try:
-            _materialize_event_plan(_event_migration_plan(repository))
-        except (OSError, ValueError) as error:
-            raise _migration_stop(repository, "legacy_migration_interrupted") from error
-        _write_legacy_registry_transition_marker(legacy_file)
-
-    try:
-        _install_legacy_registry_boundary(repository)
-        _install_legacy_events_boundary(repository)
-        _write_state(repository, "migrated")
-    except OSError as error:
-        raise _migration_stop(repository, "legacy_migration_interrupted") from error
-    return registry_path
+            _create_empty_registry(registry_path)
+        except FileExistsError:
+            pass
+    with exclusive_text_file(registry_path):
+        yield
 
 
-def _ensure_mutable_claim_state(repository: Path, command: str, claim_id: str | None) -> Path:
-    _preflight_claim_state(repository, command, claim_id)
-    state = _migration_state(repository)
-    if state is not None:
-        return _registry_path(repository)
-    legacy_registry = _legacy_registry_path(repository)
-    if (
-        legacy_registry.exists()
-        or _legacy_registry_backup(repository).exists()
-        or _legacy_events_backup(repository).exists()
-        or _legacy_event_root(repository).exists()
-    ):
-        if _legacy_registry_is_boundary(legacy_registry):
-            return _migrate_empty_legacy_state(repository)
-        legacy_claim_ids = _legacy_registry_claim_ids(repository)
-        if legacy_claim_ids:
-            if command == "release" and claim_id in legacy_claim_ids:
-                return legacy_registry
-            raise _migration_stop(repository, "legacy_live_claim_requires_release", legacy_claim_ids)
-        return _migrate_empty_legacy_state(repository)
+def _finish_legacy_migration(repository: Path) -> None:
+    state_root = _state_root(repository)
+    registry_path = state_root / REGISTRY_FILE_NAME
+    events_path = state_root / EVENT_DIRECTORY_NAME
+    legacy_root = _git_common_directory(repository)
+    legacy_registry = legacy_root / REGISTRY_FILE_NAME
+    legacy_events = legacy_root / EVENT_DIRECTORY_NAME
 
-    registry_path = _prepare_canonical_registry(repository, allow_live=True)
-    _write_state(repository, "absent")
-    return registry_path
+    if not registry_path.exists():
+        _create_empty_registry(registry_path)
+    if _registry_payload(registry_path)["claims"]:
+        raise _ClaimStateError(
+            "contradictory_dual_state",
+            "Interrupted migration found live canonical claims before the legacy boundary completed.",
+            canonical_registry=str(registry_path),
+            legacy_registry=str(legacy_registry),
+        )
 
-
-def _merged_event_bytes(legacy_path: Path, canonical_path: Path) -> bytes:
-    legacy_bytes = legacy_path.read_bytes()
-    canonical_bytes = canonical_path.read_bytes()
-    if legacy_bytes == canonical_bytes:
-        return canonical_bytes
-    if legacy_path.parent.name != "hot" or legacy_path.suffix != ".jsonl":
-        raise ValueError(f"Contradictory dual claim history: {legacy_path}")
-    events: dict[str, dict[str, Any]] = {}
-    for path, raw in ((legacy_path, legacy_bytes), (canonical_path, canonical_bytes)):
-        gaps: list[dict[str, str]] = []
-        for event in _read_jsonl(raw, str(path), gaps):
-            event_id = str(event["event_id"])
-            if event_id in events and events[event_id] != event:
-                raise ValueError(f"Contradictory dual claim event: {event_id}")
-            events[event_id] = event
-        if gaps:
-            raise ValueError(f"Cannot migrate invalid claim history {path}: {gaps}")
-    return b"".join(
-        (json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
-        for event in sorted(events.values(), key=_event_sort_key)
-    )
-
-
-def _event_migration_plan(repository: Path) -> list[tuple[Path, Path, bytes]]:
-    legacy_path = _legacy_event_root(repository)
-    backup_path = _legacy_events_backup(repository)
-    sources = [path for path in (legacy_path, backup_path) if path.is_dir()]
-    if len(sources) > 1:
-        raise _migration_stop(repository, "contradictory_dual_legacy_history")
-    if legacy_path.exists() and not legacy_path.is_dir() and not _legacy_events_are_boundary(legacy_path):
-        raise _migration_stop(repository, "invalid_legacy_history_boundary")
-    if not sources:
-        return []
-    source = sources[0]
-    canonical_root = _claim_state_root(repository) / EVENT_DIRECTORY_NAME
-    plan: list[tuple[Path, Path, bytes]] = []
-    for old_path in sorted(path for path in source.rglob("*") if path.is_file()):
-        new_path = canonical_root / old_path.relative_to(source)
-        try:
-            content = (
-                _merged_event_bytes(old_path, new_path)
-                if new_path.exists()
-                else old_path.read_bytes()
+    if _legacy_events_is_marker(legacy_events):
+        events_path.mkdir(parents=True, exist_ok=True)
+    elif legacy_events.exists():
+        if not legacy_events.is_dir() or events_path.exists():
+            raise _ClaimStateError(
+                "contradictory_dual_state",
+                "Both legacy and canonical event-history locations contain state.",
+                legacy_events=str(legacy_events),
+                canonical_events=str(events_path),
             )
-        except ValueError as error:
-            raise _migration_stop(repository, "contradictory_dual_history") from error
-        plan.append((old_path, new_path, content))
-    return plan
+        os.rename(legacy_events, events_path)
+    else:
+        events_path.mkdir(parents=True, exist_ok=True)
+
+    if os.environ.get("AGENT_CLAIM_TEST_FAIL_MIGRATION_AFTER_EVENTS") == "1":
+        raise OSError("simulated interruption after moving legacy event history")
+
+    if _legacy_registry_is_marker(legacy_registry):
+        pass
+    elif legacy_registry.exists():
+        legacy_data = _registry_payload(legacy_registry)
+        if legacy_data["claims"]:
+            raise _ClaimStateError(
+                "live_legacy_claims_require_drain",
+                "Release every live legacy claim before migrating claim state.",
+                legacy_registry=str(legacy_registry),
+                live_claim_ids=[str(claim.get("claim_id")) for claim in legacy_data["claims"]],
+            )
+        legacy_registry.unlink()
+    _install_legacy_registry_marker(legacy_registry)
+    _install_legacy_events_marker(legacy_events)
+    _write_state_marker(repository, "complete", "legacy")
+
+
+def _resolve_registry_path(
+    repository: Path,
+    operation: str,
+    claim_id: str | None,
+) -> Path:
+    registry_path = _registry_path(repository)
+    legacy_registry = _legacy_registry_path(repository)
+    legacy_events = _git_common_directory(repository) / EVENT_DIRECTORY_NAME
+    marker = _state_marker(repository)
+
+    if marker and marker["migration_status"] == "complete":
+        if not registry_path.exists():
+            raise _ClaimStateError(
+                "canonical_registry_missing",
+                "The completed claim-state marker has no canonical registry.",
+                registry=str(registry_path),
+            )
+        if marker["origin"] == "fresh":
+            if os.path.lexists(legacy_registry) or os.path.lexists(legacy_events):
+                raise _ClaimStateError(
+                    "contradictory_dual_state",
+                    "Fresh canonical claim state conflicts with state later created at a legacy path.",
+                    canonical_registry=str(registry_path),
+                    legacy_registry=str(legacy_registry),
+                    legacy_events=str(legacy_events),
+                )
+        elif not (
+            _legacy_registry_is_marker(legacy_registry)
+            and _legacy_events_is_marker(legacy_events)
+        ):
+            raise _ClaimStateError(
+                "contradictory_dual_state",
+                "Migrated claim state is missing an exact incompatible legacy-path marker.",
+                canonical_registry=str(registry_path),
+                legacy_registry=str(legacy_registry),
+                legacy_events=str(legacy_events),
+            )
+        return registry_path
+
+    if marker and marker["migration_status"] == "in_progress":
+        try:
+            with _migration_lock(repository):
+                _finish_legacy_migration(repository)
+        except _ClaimStateError:
+            raise
+        except OSError as error:
+            raise _ClaimStateError(
+                "migration_interrupted",
+                f"Claim-state migration was interrupted and can be retried: {error}",
+                canonical_registry=str(registry_path),
+                legacy_registry=str(legacy_registry),
+            ) from error
+        return registry_path
+
+    if registry_path.exists() and (
+        os.path.lexists(legacy_registry) or os.path.lexists(legacy_events)
+    ):
+        raise _ClaimStateError(
+            "contradictory_dual_state",
+            "Both legacy and canonical claim registries exist without one storage alias.",
+            canonical_registry=str(registry_path),
+            legacy_registry=str(legacy_registry),
+        )
+
+    if not os.path.lexists(legacy_registry) and os.path.lexists(legacy_events):
+        raise _ClaimStateError(
+            "contradictory_dual_state",
+            "Legacy event history exists without its legacy registry.",
+            legacy_registry=str(legacy_registry),
+            legacy_events=str(legacy_events),
+        )
+
+    if os.path.lexists(legacy_registry):
+        with exclusive_text_file(legacy_registry) as legacy_file:
+            try:
+                legacy_file.seek(0)
+                raw = legacy_file.read()
+                try:
+                    data = json.loads(raw) if raw else {"claims": []}
+                except json.JSONDecodeError as error:
+                    raise _ClaimStateError(
+                        "invalid_registry",
+                        f"Legacy claim registry contains invalid JSON: {legacy_registry}",
+                        legacy_registry=str(legacy_registry),
+                    ) from error
+                if not isinstance(data, dict) or not isinstance(data.get("claims"), list):
+                    raise _ClaimStateError(
+                        "invalid_registry",
+                        f"Legacy claim registry has an invalid claims field: {legacy_registry}",
+                        legacy_registry=str(legacy_registry),
+                    )
+                claims = data["claims"]
+                if claims:
+                    live_ids = [str(claim.get("claim_id")) for claim in claims]
+                    if operation == "release" and claim_id in live_ids:
+                        return legacy_registry
+                    raise _ClaimStateError(
+                        "live_legacy_claims_require_drain",
+                        "The legacy registry is drain-only until every live claim is released.",
+                        legacy_registry=str(legacy_registry),
+                        live_claim_ids=live_ids,
+                        allowed_operation="release",
+                    )
+                _state_root(repository).mkdir(parents=True, exist_ok=True)
+                _write_state_marker(repository, "in_progress", "legacy")
+                try:
+                    with _migration_lock(repository):
+                        _finish_legacy_migration(repository)
+                except _ClaimStateError:
+                    raise
+                except OSError as error:
+                    raise _ClaimStateError(
+                        "migration_interrupted",
+                        f"Claim-state migration was interrupted and can be retried: {error}",
+                        canonical_registry=str(registry_path),
+                        legacy_registry=str(legacy_registry),
+                    ) from error
+                return registry_path
+            finally:
+                pass
+
+    with _migration_lock(repository):
+        current_marker = _state_marker(repository)
+        if current_marker is not None:
+            if current_marker["migration_status"] != "complete":
+                raise _ClaimStateError(
+                    "migration_interrupted",
+                    "Claim-state migration is incomplete; retry the mutating operation.",
+                    canonical_registry=str(registry_path),
+                    legacy_registry=str(legacy_registry),
+                )
+            return registry_path
+        _registry_payload(registry_path)
+        _write_state_marker(repository, "complete", "fresh")
+    return registry_path
+
+
+def _read_only_registry(repository: Path) -> tuple[Path, dict[str, Any]]:
+    """Read claim state under its existing lock without creating or migrating storage."""
+    registry_path = _registry_path(repository)
+    legacy_registry = _legacy_registry_path(repository)
+    legacy_events = _git_common_directory(repository) / EVENT_DIRECTORY_NAME
+    marker = _state_marker(repository)
+
+    if marker and marker["migration_status"] == "in_progress":
+        raise _ClaimStateError(
+            "migration_interrupted",
+            "Claim-state migration is incomplete; retry with the next mutating operation.",
+            canonical_registry=str(registry_path),
+            legacy_registry=str(legacy_registry),
+        )
+    if marker and marker["migration_status"] == "complete":
+        if not registry_path.exists():
+            raise _ClaimStateError(
+                "canonical_registry_missing",
+                "The completed claim-state marker has no canonical registry.",
+                registry=str(registry_path),
+            )
+        if marker["origin"] == "fresh":
+            if os.path.lexists(legacy_registry) or os.path.lexists(legacy_events):
+                raise _ClaimStateError(
+                    "contradictory_dual_state",
+                    "Fresh canonical claim state conflicts with state later created at a legacy path.",
+                    canonical_registry=str(registry_path),
+                    legacy_registry=str(legacy_registry),
+                    legacy_events=str(legacy_events),
+                )
+        elif not (
+            _legacy_registry_is_marker(legacy_registry)
+            and _legacy_events_is_marker(legacy_events)
+        ):
+            raise _ClaimStateError(
+                "contradictory_dual_state",
+                "Migrated claim state is missing an exact incompatible legacy-path marker.",
+                canonical_registry=str(registry_path),
+                legacy_registry=str(legacy_registry),
+                legacy_events=str(legacy_events),
+            )
+    elif registry_path.exists() and (
+        os.path.lexists(legacy_registry) or os.path.lexists(legacy_events)
+    ):
+        raise _ClaimStateError(
+            "contradictory_dual_state",
+            "Both legacy and canonical claim registries exist without a completed boundary.",
+            canonical_registry=str(registry_path),
+            legacy_registry=str(legacy_registry),
+        )
+    elif not registry_path.exists() and os.path.lexists(legacy_registry):
+        if _legacy_registry_is_marker(legacy_registry):
+            raise _ClaimStateError(
+                "migration_interrupted",
+                "A legacy registry marker exists without a completed canonical boundary.",
+                canonical_registry=str(registry_path),
+                legacy_registry=str(legacy_registry),
+            )
+        with exclusive_text_file(legacy_registry) as legacy_file:
+            try:
+                legacy_file.seek(0)
+                raw = legacy_file.read()
+                try:
+                    data = json.loads(raw) if raw else {"claims": []}
+                except json.JSONDecodeError as error:
+                    raise _ClaimStateError(
+                        "invalid_registry",
+                        f"Legacy claim registry contains invalid JSON: {legacy_registry}",
+                        legacy_registry=str(legacy_registry),
+                    ) from error
+                if not isinstance(data, dict) or not isinstance(data.get("claims"), list):
+                    raise _ClaimStateError(
+                        "invalid_registry",
+                        f"Legacy claim registry has an invalid claims field: {legacy_registry}",
+                        legacy_registry=str(legacy_registry),
+                    )
+                if data["claims"]:
+                    raise _ClaimStateError(
+                        "live_legacy_claims_require_drain",
+                        "The legacy registry is drain-only until every live claim is released.",
+                        legacy_registry=str(legacy_registry),
+                        live_claim_ids=[str(claim.get("claim_id")) for claim in data["claims"]],
+                        allowed_operation="release",
+                    )
+                return registry_path, {"claims": []}
+            finally:
+                pass
+
+    if not os.path.lexists(legacy_registry) and os.path.lexists(legacy_events):
+        raise _ClaimStateError(
+            "contradictory_dual_state",
+            "Legacy event history exists without its legacy registry.",
+            legacy_registry=str(legacy_registry),
+            legacy_events=str(legacy_events),
+        )
+
+    if not registry_path.exists():
+        return registry_path, {"claims": []}
+    with exclusive_text_file(registry_path) as registry_file:
+        try:
+            registry_file.seek(0)
+            raw = registry_file.read()
+            data = json.loads(raw) if raw else {"claims": []}
+            if not isinstance(data, dict) or not isinstance(data.get("claims"), list):
+                raise _ClaimStateError(
+                    "invalid_registry",
+                    f"Claim registry has an invalid claims field: {registry_path}",
+                    registry=str(registry_path),
+                )
+            return registry_path, data
+        except json.JSONDecodeError as error:
+            raise _ClaimStateError(
+                "invalid_registry",
+                f"Claim registry contains invalid JSON: {registry_path}",
+                registry=str(registry_path),
+            ) from error
+        finally:
+            pass
 
 
 def _journal_paths(common_directory: Path) -> tuple[Path, Path, Path, Path]:
@@ -553,39 +650,33 @@ def _journal_paths(common_directory: Path) -> tuple[Path, Path, Path, Path]:
 
 
 @contextmanager
-def _locked_registry(
+def _locked_registry_file(
     repository: Path,
-    command: str,
+    operation: str,
     claim_id: str | None = None,
-) -> Iterator[tuple[Path, dict[str, Any], IO[str]]]:
-    registry_path = _ensure_mutable_claim_state(repository, command, claim_id)
+) -> Iterator[tuple[Path, TextIO]]:
+    registry_path = _resolve_registry_path(repository, operation, claim_id)
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
     with exclusive_text_file(registry_path) as registry_file:
-        registry_file.seek(0)
-        raw_registry = registry_file.read()
-        data = json.loads(raw_registry) if raw_registry else {"claims": []}
-        if not isinstance(data.get("claims"), list):
-            raise ValueError(f"Invalid claim registry: {registry_path}")
-        yield registry_path, data, registry_file
+        yield registry_path, registry_file
 
 
 @contextmanager
-def _read_locked_registry(repository: Path) -> Iterator[tuple[Path, dict[str, Any]]]:
-    _preflight_claim_state(repository, "status", None)
-    registry_path = _registry_path(repository)
-    state = _migration_state(repository)
-    legacy_registry = _legacy_registry_path(repository)
-    if state is None and _legacy_registry_is_boundary(legacy_registry):
-        raise _migration_stop(repository, "legacy_migration_interrupted")
-    if not registry_path.exists():
-        yield registry_path, {"claims": []}
-        return
-    with exclusive_text_file(registry_path) as registry_file:
-        registry_file.seek(0)
-        raw_registry = registry_file.read()
-        data = json.loads(raw_registry) if raw_registry else {"claims": []}
-        if not isinstance(data.get("claims"), list):
-            raise ValueError(f"Invalid claim registry: {registry_path}")
-        yield registry_path, data
+def _locked_registry(
+    repository: Path,
+    operation: str,
+    claim_id: str | None = None,
+) -> Iterator[tuple[Path, dict[str, Any], TextIO]]:
+    with _locked_registry_file(repository, operation, claim_id) as (registry_path, registry_file):
+        try:
+            registry_file.seek(0)
+            raw_registry = registry_file.read()
+            data = json.loads(raw_registry) if raw_registry else {"claims": []}
+            if not isinstance(data.get("claims"), list):
+                raise ValueError(f"Invalid claim registry: {registry_path}")
+            yield registry_path, data, registry_file
+        finally:
+            pass
 
 
 @contextmanager
@@ -596,7 +687,7 @@ def _maintenance_lock(common_directory: Path) -> Iterator[None]:
         yield
 
 
-def _write_registry(registry_file: IO[str], data: dict[str, Any]) -> None:
+def _write_registry(registry_file: TextIO, data: dict[str, Any]) -> None:
     registry_file.seek(0)
     registry_file.write(json.dumps(data, indent=2, sort_keys=True) + "\n")
     registry_file.truncate()
@@ -629,141 +720,292 @@ def _parse_timestamp(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _path_domain(path: str) -> str:
-    return "backlog" if _path_is_within(path, BACKLOG_ROOT_DIRECTORY) else "project_files"
+def _deadline_policy_seconds(
+    policy: dict[str, Any],
+    field: str,
+    context: str,
+    *,
+    allow_zero: bool = False,
+) -> int:
+    value = policy.get(field)
+    valid = isinstance(value, int) and not isinstance(value, bool)
+    valid = valid and (value >= 0 if allow_zero else value > 0)
+    if not valid:
+        qualifier = "non-negative" if allow_zero else "positive"
+        raise _DeadlineError(
+            f"{context}.{field} must be a {qualifier} integer.",
+            field,
+            "invalid_project_deadline_policy",
+        )
+    return value
 
 
-def _status_snapshot(worktree: Path) -> dict[str, dict[str, str]]:
-    raw_entries = _git(
-        worktree,
-        "status",
-        "--porcelain=v1",
-        "-z",
-        "--untracked-files=all",
-    ).stdout.split("\0")
-    snapshot: dict[str, dict[str, str]] = {"project_files": {}, "backlog": {}}
-    index = 0
-    while index < len(raw_entries):
-        entry = raw_entries[index]
-        index += 1
-        if not entry:
-            continue
-        status = entry[:2]
-        paths = [entry[3:]]
-        if "R" in status or "C" in status:
-            if index >= len(raw_entries) or not raw_entries[index]:
-                raise ValueError("Incomplete NUL-terminated Git rename status record.")
-            paths.append(raw_entries[index])
-            index += 1
-        for path in paths:
-            if _path_is_within(path, CLAIM_STATE_REPOSITORY_PATH):
-                continue
-            snapshot[_path_domain(path)][path] = status
-    return snapshot
+def _load_deadline_policy(repository: Path) -> dict[str, Any]:
+    project_path = repository / "PROJECT.yaml"
+    if not project_path.is_file():
+        raise _DeadlineError(
+            "PROJECT.yaml is required for named resource acquisition.",
+            "PROJECT.yaml",
+            "project_policy_missing",
+        )
+    try:
+        project = yaml.safe_load(project_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as error:
+        raise _DeadlineError(
+            f"PROJECT.yaml resource deadline policy is unreadable or invalid: {error}.",
+            "PROJECT.yaml",
+            "project_policy_invalid",
+        ) from error
+    coordination = project.get("resource_coordination") if isinstance(project, dict) else None
+    if not isinstance(coordination, dict) or coordination.get("selected") != "agent-claim":
+        raise _DeadlineError(
+            "PROJECT.yaml resource_coordination must select agent-claim for named resource acquisition.",
+            "resource_coordination.selected",
+            "resource_coordination_not_selected",
+        )
+    policy = coordination.get("deadline_policy")
+    if not isinstance(policy, dict) or set(policy) != {"resource_classes", "resource_overrides"}:
+        raise _DeadlineError(
+            "resource_coordination.deadline_policy keys must be exactly: resource_classes, resource_overrides.",
+            "resource_coordination.deadline_policy",
+            "invalid_project_deadline_policy",
+        )
+    classes = policy.get("resource_classes")
+    if not isinstance(classes, dict) or set(classes) != set(_RESOURCE_DEADLINE_CLASS_IDS):
+        raise _DeadlineError(
+            "resource_coordination.deadline_policy.resource_classes keys must be exactly: "
+            + ", ".join(_RESOURCE_DEADLINE_CLASS_IDS)
+            + ".",
+            "resource_coordination.deadline_policy.resource_classes",
+            "invalid_project_deadline_policy",
+        )
+    normalized_classes: dict[str, dict[str, int]] = {}
+    for class_id in _RESOURCE_DEADLINE_CLASS_IDS:
+        class_policy = classes[class_id]
+        context = f"resource_coordination.deadline_policy.resource_classes.{class_id}"
+        if not isinstance(class_policy, dict) or set(class_policy) != {
+            "maximum_duration_seconds",
+            "cleanup_grace_seconds",
+        }:
+            raise _DeadlineError(
+                f"{context} keys must be exactly: maximum_duration_seconds, cleanup_grace_seconds.",
+                context,
+                "invalid_project_deadline_policy",
+            )
+        normalized_classes[class_id] = {
+            "maximum_duration_seconds": _deadline_policy_seconds(
+                class_policy,
+                "maximum_duration_seconds",
+                context,
+            ),
+            "cleanup_grace_seconds": _deadline_policy_seconds(
+                class_policy,
+                "cleanup_grace_seconds",
+                context,
+                allow_zero=True,
+            ),
+        }
+    overrides = policy.get("resource_overrides")
+    if not isinstance(overrides, dict):
+        raise _DeadlineError(
+            "resource_coordination.deadline_policy.resource_overrides must be a mapping.",
+            "resource_coordination.deadline_policy.resource_overrides",
+            "invalid_project_deadline_policy",
+        )
+    normalized_overrides: dict[str, dict[str, Any]] = {}
+    for raw_resource_id, override in overrides.items():
+        resource_id = raw_resource_id.strip() if isinstance(raw_resource_id, str) else ""
+        context = f"resource_coordination.deadline_policy.resource_overrides.{resource_id}"
+        if not resource_id or resource_id != raw_resource_id or len(resource_id) > MAX_IDENTIFIER_LENGTH:
+            raise _DeadlineError(
+                "resource override ids must be canonical non-empty strings of at most 200 characters.",
+                "resource_id",
+                "invalid_project_deadline_policy",
+            )
+        if not isinstance(override, dict) or set(override) != {
+            "resource_class",
+            "maximum_duration_seconds",
+            "cleanup_grace_seconds",
+        }:
+            raise _DeadlineError(
+                f"{context} keys must be exactly: resource_class, maximum_duration_seconds, cleanup_grace_seconds.",
+                context,
+                "invalid_project_deadline_policy",
+            )
+        resource_class = override.get("resource_class")
+        if resource_class not in normalized_classes:
+            raise _DeadlineError(
+                f"{context}.resource_class must name a configured resource class.",
+                "resource_class",
+                "invalid_project_deadline_policy",
+            )
+        normalized_overrides[resource_id] = {
+            "resource_class": resource_class,
+            "maximum_duration_seconds": _deadline_policy_seconds(
+                override,
+                "maximum_duration_seconds",
+                context,
+            ),
+            "cleanup_grace_seconds": _deadline_policy_seconds(
+                override,
+                "cleanup_grace_seconds",
+                context,
+                allow_zero=True,
+            ),
+        }
+    return {"resource_classes": normalized_classes, "resource_overrides": normalized_overrides}
 
 
-def _status_entries(paths: dict[str, str]) -> list[dict[str, str]]:
-    return [
-        {"path": path, "status": status}
-        for path, status in sorted(paths.items())
-    ]
+def _deadline_request_from_args(
+    args: argparse.Namespace,
+    resources: Sequence[str],
+    repository: Path,
+) -> dict[str, Any] | None:
+    argument_names = (
+        "resource_class",
+        "resource_id",
+        "expected_duration_seconds",
+        "requested_hard_stop_duration_seconds",
+    )
+    values = {name: getattr(args, name, None) for name in argument_names}
+    supplied = [name for name, value in values.items() if value is not None]
+    if len(resources) > 1:
+        raise _DeadlineError(
+            "A claim may acquire exactly one named resource.",
+            "resource",
+            "multiple_resources_not_supported",
+        )
+    if not resources and not supplied:
+        return None
+    if not resources:
+        raise _DeadlineError(
+            "Resource timing arguments require exactly one named --resource.",
+            "resource",
+            "timing_without_resource",
+        )
+    if not supplied:
+        raise _DeadlineError(
+            "Named resource acquisition requires complete timing evidence.",
+            "resource",
+            "resource_timing_required",
+        )
+    if len(supplied) != len(argument_names):
+        missing = sorted(set(argument_names) - set(supplied))
+        raise _DeadlineError(
+            f"Resource timing arguments must be supplied together; missing: {', '.join(missing)}.",
+            ",".join(missing),
+            "incomplete_deadline_arguments",
+        )
 
+    resource_class = values["resource_class"].strip() if isinstance(values["resource_class"], str) else None
+    resource_id = values["resource_id"].strip() if isinstance(values["resource_id"], str) else None
+    if not isinstance(resource_class, str) or not re.fullmatch(r"[a-z][a-z0-9-]*", resource_class):
+        raise _DeadlineError(
+            "resource class must be a stable lowercase identifier containing letters, digits, and hyphens.",
+            "resource_class",
+            "invalid_resource_class",
+        )
+    if not isinstance(resource_id, str) or resource_id != resources[0]:
+        raise _DeadlineError(
+            "resource id must exactly match one acquired --resource value.",
+            "resource_id",
+            "resource_id_not_acquired",
+        )
 
-def _status_state(worktree: Path, snapshot: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
-    state: dict[str, dict[str, str]] = {}
-    for paths in snapshot.values():
-        for path, status in paths.items():
-            candidate = worktree / path
-            if candidate.is_symlink():
-                worktree_digest = hashlib.sha256(os.readlink(candidate).encode("utf-8")).hexdigest()
-            elif candidate.is_file():
-                worktree_digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
-            else:
-                worktree_digest = "missing"
-            index_entry = _git(worktree, "ls-files", "--stage", "--", path).stdout.strip()
-            state[path] = {
-                "status": status,
-                "worktree_sha256": worktree_digest,
-                "index_entry": index_entry,
-            }
-    return state
+    expected = values["expected_duration_seconds"]
+    hard_stop = values["requested_hard_stop_duration_seconds"]
+    for field, value in (
+        ("expected_duration_seconds", expected),
+        ("requested_hard_stop_duration_seconds", hard_stop),
+    ):
+        if not isinstance(value, int) or value <= 0:
+            raise _DeadlineError(
+                f"{field.replace('_', ' ')} must be a positive integer.",
+                field,
+                "invalid_duration",
+            )
+    if expected > hard_stop:
+        raise _DeadlineError(
+            "expected duration must not exceed requested hard stop.",
+            "expected_duration_seconds",
+            "expected_exceeds_hard_stop",
+        )
+    policy = _load_deadline_policy(repository)
+    class_policy = policy["resource_classes"].get(resource_class)
+    if class_policy is None:
+        raise _DeadlineError(
+            "resource class must name a configured PROJECT.yaml resource class.",
+            "resource_class",
+            "resource_class_not_configured",
+        )
+    override = policy["resource_overrides"].get(resource_id)
+    if override is not None and override["resource_class"] != resource_class:
+        raise _DeadlineError(
+            f"resource id {resource_id} is configured for resource class {override['resource_class']}.",
+            "resource_class",
+            "resource_override_class_mismatch",
+        )
+    resolved = override or class_policy
+    maximum = resolved["maximum_duration_seconds"]
+    cleanup_grace = resolved["cleanup_grace_seconds"]
+    if hard_stop > maximum:
+        raise _DeadlineError(
+            "requested hard stop must not exceed configured maximum.",
+            "requested_hard_stop_duration_seconds",
+            "hard_stop_exceeds_maximum",
+        )
 
-
-def _state_outside_domain(
-    state: dict[str, dict[str, str]],
-    file_domain: str,
-) -> dict[str, dict[str, str]]:
     return {
-        path: details
-        for path, details in state.items()
-        if not _path_belongs_to_domain(path, file_domain)
+        "resource_class": resource_class,
+        "resource_id": resource_id,
+        "expected_duration_seconds": expected,
+        "requested_hard_stop_duration_seconds": hard_stop,
+        "configured_maximum_duration_seconds": maximum,
+        "cleanup_grace_seconds": cleanup_grace,
     }
 
 
-def _status_paths(entries: Sequence[dict[str, str]]) -> list[str]:
-    return sorted({entry["path"] for entry in entries})
+def _deadline_from_request(request: dict[str, Any], acquired_at: str) -> dict[str, Any]:
+    acquired = _parse_timestamp(acquired_at)
+    hard_stop = request["requested_hard_stop_duration_seconds"]
+    cleanup_grace = request["cleanup_grace_seconds"]
+    expected = request["expected_duration_seconds"]
+    hard_stop_at = acquired + timedelta(seconds=hard_stop)
+    return {
+        **request,
+        "acquired_at": acquired_at,
+        "expected_release_at": _format_timestamp(acquired + timedelta(seconds=expected)),
+        "hard_stop_at": _format_timestamp(hard_stop_at),
+        "cleanup_grace_ends_at": _format_timestamp(
+            hard_stop_at + timedelta(seconds=cleanup_grace)
+        ),
+        "extensions": [],
+    }
 
 
-def _status_for_domain(
-    snapshot: dict[str, dict[str, str]],
-    file_domain: str,
-    *,
-    resource_only: bool = False,
-) -> list[dict[str, str]]:
-    if file_domain == "all_files" or (file_domain == "none" and not resource_only):
-        return _status_entries({**snapshot["project_files"], **snapshot["backlog"]})
-    if file_domain == "none":
-        return []
-    if file_domain in snapshot:
-        return _status_entries(snapshot[file_domain])
-    return []
+def _deadline_status(deadline: dict[str, Any], evaluated_at: datetime) -> dict[str, Any]:
+    hard_stop_at = _parse_timestamp(str(deadline["hard_stop_at"]))
+    cleanup_grace_ends_at = _parse_timestamp(str(deadline["cleanup_grace_ends_at"]))
+    overdue = evaluated_at >= hard_stop_at
+    cleanup_elapsed = evaluated_at >= cleanup_grace_ends_at
+    return {
+        "evaluated_at": _format_timestamp(evaluated_at),
+        "overdue": overdue,
+        "cleanup_grace": {
+            "seconds": deadline["cleanup_grace_seconds"],
+            "ends_at": deadline["cleanup_grace_ends_at"],
+            "active": overdue and not cleanup_elapsed,
+            "elapsed": cleanup_elapsed,
+        },
+        "stopped_owner_actionability_inputs": {
+            "owner_stopped": None,
+            "immediately_actionable_when_stopped": True,
+        },
+    }
 
 
-def _status_outside_domain(
-    snapshot: dict[str, dict[str, str]],
-    file_domain: str,
-) -> list[dict[str, str]]:
-    if file_domain == "project_files":
-        return _status_entries(snapshot["backlog"])
-    if file_domain == "backlog":
-        return _status_entries(snapshot["project_files"])
-    return []
-
-
-def _path_belongs_to_domain(path: str, file_domain: str) -> bool:
-    return file_domain in {"all_files", "none"} or _path_domain(path) == file_domain
-
-
-def _committed_paths(worktree: Path, baseline_commit: str, resulting_commit: str) -> list[str]:
-    if baseline_commit == resulting_commit:
-        return []
-    ancestry = _git(
-        worktree,
-        "merge-base",
-        "--is-ancestor",
-        baseline_commit,
-        resulting_commit,
-        check=False,
-    )
-    if ancestry.returncode != SUCCESS:
-        raise ValueError("baseline_not_ancestor")
-    commits = _git(worktree, "rev-list", "--reverse", f"{baseline_commit}..{resulting_commit}").stdout.splitlines()
-    paths: set[str] = set()
-    for commit in commits:
-        raw_paths = _git(
-            worktree,
-            "diff-tree",
-            "--no-commit-id",
-            "--name-only",
-            "--diff-filter=ACDMRTUXB",
-            "--no-renames",
-            "-r",
-            "-m",
-            "-z",
-            commit,
-        ).stdout
-        paths.update(path for path in raw_paths.split("\0") if path)
-    return sorted(paths)
+def _path_domain(path: str) -> str:
+    return "backlog" if _path_is_within(path, BACKLOG_ROOT_DIRECTORY) else "project_files"
 
 
 def _head(worktree: Path) -> str:
@@ -819,11 +1061,26 @@ def _bounded_identifier(value: str | None) -> str | None:
     return value.strip()[:MAX_IDENTIFIER_LENGTH]
 
 
+def _valid_blocker_reference(value: Any) -> bool:
+    return bool(
+        isinstance(value, str)
+        and value
+        and value == value.strip()
+        and "\n" not in value
+        and "\r" not in value
+        and len(value) <= MAX_IDENTIFIER_LENGTH
+    )
+
+
 def _deduplicate(values: Sequence[str]) -> list[str]:
     return list(dict.fromkeys(values))
 
 
-def _normalize_repository_path(repository: Path, value: str) -> str:
+def _normalize_repository_path(
+    repository: Path,
+    value: str,
+    case_sensitive: bool,
+) -> str:
     stripped = value.strip()
     if not stripped:
         raise _ScopeError("Scope paths cannot be empty.", value, "provide a repository-relative path")
@@ -833,29 +1090,37 @@ def _normalize_repository_path(repository: Path, value: str) -> str:
             stripped,
             "use --tree <path> or --all-files",
         )
-    candidate = Path(stripped)
+    candidate = Path(os.path.normpath(str(Path(stripped))))
     if candidate.is_absolute():
-        try:
-            candidate = candidate.resolve().relative_to(repository)
-        except ValueError as error:
+        repository_parts = repository.parts
+        candidate_parts = candidate.parts
+        if case_sensitive:
+            contained = candidate_parts[: len(repository_parts)] == repository_parts
+        else:
+            contained = tuple(part.casefold() for part in candidate_parts[: len(repository_parts)]) == tuple(
+                part.casefold() for part in repository_parts
+            )
+        if not contained:
             raise _ScopeError(
                 "Scope paths must remain inside the repository.",
                 stripped,
                 "provide a repository-relative path",
-            ) from error
-    normalized = Path(os.path.normpath(str(candidate))).as_posix()
+            )
+        candidate = Path(*candidate_parts[len(repository_parts):])
+    normalized = candidate.as_posix()
     if normalized == ".." or normalized.startswith("../"):
         raise _ScopeError(
             "Scope paths must remain inside the repository.",
             stripped,
             "provide a repository-relative path",
         )
+    normalized = normalized if case_sensitive else normalized.casefold()
     if _path_is_within(normalized, WORKTREE_ROOT_DIRECTORY) or _path_is_within(
         normalized,
-        CLAIM_STATE_REPOSITORY_PATH,
+        CLAIM_STATE_DIRECTORY,
     ):
         raise _ScopeError(
-            "Ignored operational worktree state is outside file ownership domains.",
+            "Ignored operational state is outside file ownership domains.",
             normalized,
             "claim the project source path or an exclusive resource instead",
             "operational_path_not_claimable",
@@ -873,6 +1138,8 @@ def _empty_scope() -> dict[str, Any]:
         "file_domain": "none",
         "resources": [],
         "scope_reason": None,
+        "work_item_id": None,
+        "activity": None,
     }
 
 
@@ -880,16 +1147,28 @@ def _scope_from_args(args: argparse.Namespace, repository: Path) -> tuple[dict[s
     scope = _empty_scope()
     warnings: list[dict[str, str]] = []
     compatibility = bool(getattr(args, "compat_file_directories", False))
+    raw_files = list(getattr(args, "file", []))
+    raw_trees = list(getattr(args, "tree", []))
+    case_sensitive = (
+        _filesystem_is_case_sensitive(_primary_worktree(repository))
+        if raw_files or raw_trees
+        else True
+    )
 
-    for raw_file in getattr(args, "file", []):
-        normalized = _normalize_repository_path(repository, raw_file)
+    for raw_file in raw_files:
+        normalized = _normalize_repository_path(
+            repository,
+            raw_file,
+            case_sensitive,
+        )
         if normalized == ".":
             raise _ScopeError(
                 "Repository-wide ownership cannot be requested through --file.",
                 raw_file,
                 "use --all-files with --scope-reason",
             )
-        if (repository / normalized).is_dir():
+        candidate = repository / normalized
+        if not candidate.is_symlink() and candidate.is_dir():
             if not compatibility:
                 raise _ScopeError(
                     "Existing directories cannot be requested through --file.",
@@ -906,15 +1185,20 @@ def _scope_from_args(args: argparse.Namespace, repository: Path) -> tuple[dict[s
         else:
             scope["files"].append(normalized)
 
-    for raw_tree in getattr(args, "tree", []):
-        normalized = _normalize_repository_path(repository, raw_tree)
+    for raw_tree in raw_trees:
+        normalized = _normalize_repository_path(
+            repository,
+            raw_tree,
+            case_sensitive,
+        )
         if normalized == ".":
             raise _ScopeError(
                 "Repository root cannot be requested as a tree.",
                 raw_tree,
                 "use --all-files with --scope-reason",
             )
-        if (repository / normalized).is_file():
+        candidate = repository / normalized
+        if not candidate.is_symlink() and candidate.is_file():
             raise _ScopeError(
                 "Existing files cannot be requested through --tree.",
                 normalized,
@@ -979,13 +1263,63 @@ def _scope_from_args(args: argparse.Namespace, repository: Path) -> tuple[dict[s
                 reason,
                 "provide a short coordination-only --scope-reason",
             )
-    if (scope["trees"] or scope["project_files"] or scope["all_files"]) and not reason:
+    if (
+        scope["trees"]
+        or scope["project_files"]
+        or scope["backlog"]
+        or scope["all_files"]
+    ) and not reason:
         raise _ScopeError(
-            "Broad tree and repository-wide scopes require a reason.",
-            ", ".join(scope["trees"]) or ".",
+            "Broad tree and file-domain scopes require a reason.",
+            ", ".join(scope["trees"]) or scope["file_domain"],
             "add --scope-reason with bounded coordination-only text",
+            "scope_reason_required",
         )
     scope["scope_reason"] = reason
+    work_item_id = getattr(args, "work_item_id", None)
+    activity = getattr(args, "activity", None)
+    if (work_item_id is None) != (activity is None):
+        missing = "activity" if activity is None else "work_item_id"
+        raise _WorkItemError(
+            "Work-item acquisition requires both work_item_id and activity.",
+            missing,
+            "incomplete_work_item_scope",
+        )
+    if work_item_id is not None:
+        if (
+            not isinstance(work_item_id, str)
+            or not work_item_id
+            or work_item_id != work_item_id.strip()
+            or "\n" in work_item_id
+            or "\r" in work_item_id
+            or len(work_item_id) > MAX_IDENTIFIER_LENGTH
+        ):
+            raise _WorkItemError(
+                "work_item_id must be a canonical non-empty single-line value of at most 200 characters.",
+                "work_item_id",
+                "invalid_work_item_id",
+            )
+        if activity not in {"work", "update"}:
+            raise _WorkItemError(
+                "activity must be exactly work or update.",
+                "activity",
+                "invalid_activity",
+            )
+        if (
+            scope["files"]
+            or scope["trees"]
+            or scope["project_files"]
+            or scope["backlog"]
+            or scope["all_files"]
+            or scope["resources"]
+        ):
+            raise _WorkItemError(
+                "A work-item claim cannot combine path or resource scope.",
+                "work_item_id",
+                "mixed_work_item_and_operational_scope",
+            )
+        scope["work_item_id"] = work_item_id
+        scope["activity"] = activity
     return scope, warnings
 
 
@@ -999,6 +1333,8 @@ def _claim_scope(claim: dict[str, Any]) -> dict[str, Any]:
         "file_domain": str(claim.get("file_domain") or _legacy_file_domain(claim)),
         "resources": [str(value) for value in claim.get("resources", [])],
         "scope_reasons": dict(claim.get("scope_reasons", {})),
+        "work_item_id": claim.get("work_item_id"),
+        "activity": claim.get("activity"),
     }
 
 
@@ -1016,26 +1352,105 @@ def _legacy_file_domain(claim: dict[str, Any]) -> str:
     return "none"
 
 
-def _claim_for_output(claim: dict[str, Any]) -> dict[str, Any]:
+def _claim_for_output(
+    claim: dict[str, Any],
+    evaluated_at: datetime | None = None,
+) -> dict[str, Any]:
     rendered = dict(claim)
     if "file_domain" not in claim:
         rendered["file_domain"] = _legacy_file_domain(claim)
         rendered["project_files"] = False
         rendered["backlog"] = False
-        rendered["compatibility"] = {
-            "legacy_registry_claim": True,
-            "release_policy": "complete_worktree",
-        }
-    elif not isinstance(claim.get("baseline_out_of_domain_state"), dict):
-        rendered["compatibility"] = {
-            "missing_out_of_domain_baseline": True,
-            "release_policy": "complete_worktree",
-        }
+        rendered["compatibility"] = {"legacy_registry_claim": True}
+    deadline = claim.get("deadline")
+    if isinstance(deadline, dict) and evaluated_at is not None:
+        rendered["deadline_status"] = _deadline_status(deadline, evaluated_at)
     return rendered
 
 
 def _path_is_within(path: str, tree: str) -> bool:
     return path == tree or path.startswith(tree + "/")
+
+
+def _filesystem_is_case_sensitive(directory: Path) -> bool:
+    entries = set(os.listdir(directory))
+    for entry in entries:
+        variant = _single_character_case_variant(entry)
+        if variant is None or variant in entries:
+            continue
+        return not os.path.lexists(directory / variant)
+    raise OSError(f"Unable to establish filesystem case sensitivity for {directory}")
+
+
+def _single_character_case_variant(value: str) -> str | None:
+    for index, character in enumerate(value):
+        if "a" <= character <= "z":
+            return f"{value[:index]}{character.upper()}{value[index + 1:]}"
+        if "A" <= character <= "Z":
+            return f"{value[:index]}{character.lower()}{value[index + 1:]}"
+    return None
+
+
+def _claim_scope_for_comparison(
+    claim: dict[str, Any],
+    repository: Path,
+) -> dict[str, Any]:
+    raw_files = claim.get("files", [])
+    raw_trees = claim.get("trees", [])
+    try:
+        if not isinstance(raw_files, list) or not all(
+            isinstance(path, str) for path in raw_files
+        ):
+            raise _ScopeError(
+                "Stored file scopes must be repository-relative path strings.",
+                str(raw_files),
+                "release or reconcile the invalid legacy claim",
+                "invalid_stored_scope",
+            )
+        if not isinstance(raw_trees, list) or not all(
+            isinstance(path, str) for path in raw_trees
+        ):
+            raise _ScopeError(
+                "Stored tree scopes must be repository-relative path strings.",
+                str(raw_trees),
+                "release or reconcile the invalid legacy claim",
+                "invalid_stored_scope",
+            )
+        scope = _claim_scope(claim)
+        if not raw_files and not raw_trees:
+            return scope
+        case_sensitive = _filesystem_is_case_sensitive(_primary_worktree(repository))
+        scope["files"] = _deduplicate(
+            _normalize_repository_path(repository, path, case_sensitive)
+            for path in raw_files
+        )
+        scope["trees"] = _deduplicate(
+            _normalize_repository_path(repository, path, case_sensitive)
+            for path in raw_trees
+        )
+        if "." in scope["files"] or "." in scope["trees"]:
+            raise _ScopeError(
+                "Stored exact path scopes cannot represent the repository root.",
+                ".",
+                "release or reconcile the invalid legacy claim",
+                "invalid_stored_scope",
+            )
+        if "file_domain" not in claim:
+            scope["file_domain"] = _legacy_file_domain(scope)
+    except (OSError, _ScopeError):
+        scope = _empty_scope()
+        raw_resources = claim.get("resources", [])
+        if isinstance(raw_resources, list):
+            scope["resources"] = [str(resource) for resource in raw_resources]
+        scope["files"] = []
+        scope["trees"] = []
+        scope["project_files"] = False
+        scope["backlog"] = False
+        scope["all_files"] = True
+        scope["file_domain"] = "all_files"
+        scope["work_item_id"] = claim.get("work_item_id")
+        scope["activity"] = claim.get("activity")
+    return scope
 
 
 def _path_scope_overlap(
@@ -1077,10 +1492,10 @@ def _path_scopes(scope: dict[str, Any], include_broad: bool = True) -> list[tupl
 
 
 def _scope_requires_primary_worktree(scope: dict[str, Any]) -> bool:
-    return scope.get("file_domain") in {"backlog", "all_files"} or any(
-        resource in PRIMARY_WORKTREE_RESOURCES
-        for resource in scope.get("resources", [])
-    )
+    return bool(scope.get("project_files")) or scope.get("file_domain") in {
+        "backlog",
+        "all_files",
+    }
 
 
 def _scope_file_domain(scope: dict[str, Any]) -> str:
@@ -1106,11 +1521,31 @@ def _scope_is_resource_only(scope: dict[str, Any]) -> bool:
     return _scope_file_domain(scope) == "none" and bool(scope.get("resources"))
 
 
-def _overlap_details(requested: dict[str, Any], claimed: dict[str, Any]) -> list[dict[str, str]]:
+def _overlap_details(
+    requested: dict[str, Any],
+    claimed: dict[str, Any],
+) -> list[dict[str, str]]:
     details: list[dict[str, str]] = []
+    requested_work_item_id = requested.get("work_item_id")
+    claimed_work_item_id = claimed.get("work_item_id")
+    if requested_work_item_id and requested_work_item_id == claimed_work_item_id:
+        details.append(
+            {
+                "scope_kind": "work_item",
+                "requested_kind": "work_item",
+                "requested": str(requested_work_item_id),
+                "claimed_kind": "work_item",
+                "claimed": str(claimed_work_item_id),
+            }
+        )
     for requested_kind, requested_path in _path_scopes(requested):
         for claimed_kind, claimed_path in _path_scopes(claimed):
-            if _path_scope_overlap(requested_kind, requested_path, claimed_kind, claimed_path):
+            if _path_scope_overlap(
+                requested_kind,
+                requested_path,
+                claimed_kind,
+                claimed_path,
+            ):
                 details.append(
                     {
                         "scope_kind": "path",
@@ -1138,13 +1573,17 @@ def _overlap_details(requested: dict[str, Any], claimed: dict[str, Any]) -> list
 def _conflicts(
     claims: list[dict[str, Any]],
     requested: dict[str, Any],
+    repository: Path,
     excluded_claim_id: str | None = None,
 ) -> list[dict[str, Any]]:
     conflicts: list[dict[str, Any]] = []
     for claim in claims:
         if claim.get("claim_id") == excluded_claim_id:
             continue
-        details = _overlap_details(requested, _claim_scope(claim))
+        details = _overlap_details(
+            requested,
+            _claim_scope_for_comparison(claim, repository),
+        )
         if details:
             conflicts.append({"claim_id": claim["claim_id"], "overlaps": details})
     return conflicts
@@ -1164,8 +1603,12 @@ def _scope_reasons(scope: dict[str, Any]) -> dict[str, str]:
     return reasons
 
 
-def _owned_and_added_scope(claim: dict[str, Any], requested: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    current = _claim_scope(claim)
+def _owned_and_added_scope(
+    claim: dict[str, Any],
+    requested: dict[str, Any],
+    repository: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    current = _claim_scope_for_comparison(claim, repository)
     added = _empty_scope()
     owned = _empty_scope()
 
@@ -1189,8 +1632,8 @@ def _owned_and_added_scope(claim: dict[str, Any], requested: dict[str, Any]) -> 
     for file_path in requested["files"]:
         target = owned if (
             current["all_files"]
-            or (current["project_files"] and _path_domain(file_path) == "project_files")
-            or (current["backlog"] and _path_domain(file_path) == "backlog")
+            or current["project_files"] and _path_domain(file_path) == "project_files"
+            or current["backlog"] and _path_domain(file_path) == "backlog"
             or file_path in current["files"]
             or any(_path_is_within(file_path, tree) for tree in current["trees"])
         ) else added
@@ -1198,8 +1641,8 @@ def _owned_and_added_scope(claim: dict[str, Any], requested: dict[str, Any]) -> 
     for tree_path in requested["trees"]:
         target = owned if (
             current["all_files"]
-            or (current["project_files"] and _path_domain(tree_path) == "project_files")
-            or (current["backlog"] and _path_domain(tree_path) == "backlog")
+            or current["project_files"] and _path_domain(tree_path) == "project_files"
+            or current["backlog"] and _path_domain(tree_path) == "backlog"
             or any(_path_is_within(tree_path, tree) for tree in current["trees"])
         ) else added
         target["trees"].append(tree_path)
@@ -1231,7 +1674,11 @@ def _scope_has_file_values(scope: dict[str, Any]) -> bool:
 
 
 def _scope_has_values(scope: dict[str, Any]) -> bool:
-    return bool(_scope_has_file_values(scope) or scope["resources"])
+    return bool(
+        _scope_has_file_values(scope)
+        or scope["resources"]
+        or scope.get("work_item_id")
+    )
 
 
 def _apply_scope(claim: dict[str, Any], added: dict[str, Any]) -> None:
@@ -1239,7 +1686,7 @@ def _apply_scope(claim: dict[str, Any], added: dict[str, Any]) -> None:
         added["file_domain"] != "none"
         and (
             claim.get("file_domain") == "none"
-            or ("file_domain" not in claim and _legacy_file_domain(claim) == "none")
+            or "file_domain" not in claim and _legacy_file_domain(claim) == "none"
         )
     )
     claim["files"] = _deduplicate([*claim.get("files", []), *added["files"]])
@@ -1256,11 +1703,13 @@ def _apply_scope(claim: dict[str, Any], added: dict[str, Any]) -> None:
 
 
 def _worktree_identifier(claim: dict[str, Any]) -> str | None:
-    mode = claim.get("mode")
-    if mode in {"primary", "recovery"}:
+    topology = _checkout_topology(claim)
+    if topology == "primary":
         return "primary"
     branch = claim.get("branch")
-    return str(branch) if branch else None
+    if branch:
+        return str(branch)
+    return "linked" if topology == "linked" else None
 
 
 def _event(
@@ -1279,6 +1728,7 @@ def _event(
         "action": action,
         "outcome": outcome,
         "claim_id": _bounded_identifier(getattr(args, "claim_id", None)),
+        "incarnation_id": claim.get("incarnation_id") if claim else None,
         "root_task_id": _bounded_identifier(
             claim.get("root_task_id") if claim else getattr(args, "root_task_id", None)
         ),
@@ -1296,8 +1746,18 @@ def _event(
             for overlap in item["overlaps"]
         ],
         "branch": claim.get("branch") if claim else None,
+        "checkout_topology": _checkout_topology(claim) if claim else None,
         "worktree_id": _worktree_identifier(claim) if claim else None,
         "baseline_commit": claim.get("baseline_commit") if claim else None,
+        "deadline": claim.get("deadline") if claim else None,
+        "work_item_id": (
+            claim.get("work_item_id")
+            if claim
+            else _bounded_identifier(getattr(args, "work_item_id", None))
+        ),
+        "activity": (
+            claim.get("activity") if claim else getattr(args, "activity", None)
+        ),
         "resulting_commit": extra.pop("resulting_commit", None),
         "command_warnings": extra.pop("command_warnings", []),
         "journal_warnings": [],
@@ -1416,16 +1876,17 @@ def _invalid_scope_result(
     args: argparse.Namespace,
     error: _ScopeError,
 ) -> int:
+    rejection = {
+        "message": str(error),
+        "offending_scope": error.offending_scope,
+        "replacement": error.replacement,
+        "reason": error.reason,
+    }
     event = _event(
         action,
         "INVALID_SCOPE",
         args,
-        rejection={
-            "message": str(error),
-            "offending_scope": error.offending_scope,
-            "replacement": error.replacement,
-            "reason": error.reason,
-        },
+        rejection=rejection,
     )
     return _journaled_result(
         ERROR,
@@ -1438,6 +1899,69 @@ def _invalid_scope_result(
     )
 
 
+def _invalid_deadline_result(
+    common_directory: Path,
+    action: str,
+    args: argparse.Namespace,
+    error: _DeadlineError,
+    claim: dict[str, Any] | None = None,
+) -> int:
+    outcome = "INVALID_DEADLINE_EXTENSION" if action == "extend-deadline" else "INVALID_DEADLINE_POLICY"
+    event = _event(
+        action,
+        outcome,
+        args,
+        claim=claim,
+        rejection={
+            "message": str(error),
+            "field": error.field,
+            "reason": error.reason,
+        },
+    )
+    return _journaled_result(
+        ERROR,
+        common_directory,
+        event,
+        message=str(error),
+        field=error.field,
+        rejection=event["rejection"],
+    )
+
+
+def _invalid_work_item_result(
+    common_directory: Path,
+    action: str,
+    args: argparse.Namespace,
+    error: _WorkItemError,
+    claim: dict[str, Any] | None = None,
+) -> int:
+    outcome = (
+        "INVALID_WORK_ITEM_RELEASE"
+        if action == "release"
+        else "INVALID_WORK_ITEM_SCOPE"
+    )
+    rejection = {
+        "message": str(error),
+        "field": error.field,
+        "reason": error.reason,
+    }
+    event = _event(
+        action,
+        outcome,
+        args,
+        claim=claim,
+        rejection=rejection,
+    )
+    return _journaled_result(
+        ERROR,
+        common_directory,
+        event,
+        message=str(error),
+        field=error.field,
+        rejection=rejection,
+    )
+
+
 def _primary_required_result(
     common_directory: Path,
     action: str,
@@ -1445,20 +1969,14 @@ def _primary_required_result(
     requested_scope: dict[str, Any],
     scope_warnings: list[dict[str, str]],
     claim: dict[str, Any] | None = None,
-    shared_checkout_claimed: bool = False,
     **details: Any,
 ) -> int:
-    backlog_scope = requested_scope.get("file_domain") in {"backlog", "all_files"}
-    reason = (
-        "backlog_requires_primary_worktree"
-        if backlog_scope
-        else "primary_location_resource_requires_primary_worktree"
-    )
-    message = (
-        "Backlog scope is available only from the primary worktree."
-        if backlog_scope
-        else "The requested primary-location resource is available only from the primary worktree."
-    )
+    if requested_scope.get("project_files"):
+        reason = "project_files_requires_primary_worktree"
+        message = "Project-files scope is available only from the primary worktree."
+    else:
+        reason = "backlog_requires_primary_worktree"
+        message = "Backlog scope is available only from the primary worktree."
     event = _event(
         action,
         "PRIMARY_REQUIRED",
@@ -1466,7 +1984,7 @@ def _primary_required_result(
         claim=claim,
         requested_scope=requested_scope,
         reason=reason,
-        shared_checkout_claimed=shared_checkout_claimed,
+        shared_checkout_claimed=False,
         command_warnings=scope_warnings,
         **details,
     )
@@ -1477,7 +1995,7 @@ def _primary_required_result(
         scope_warnings,
         canonical_outcome=_canonical_outcome(
             event["outcome"],
-            shared_checkout_claimed=shared_checkout_claimed,
+            shared_checkout_claimed=False,
         ),
         reason=reason,
         message=message,
@@ -1549,23 +2067,44 @@ def _worktree_root_not_ignored_result(
 
 def _acquire(args: argparse.Namespace) -> int:
     repository = _repository_root(Path(args.repo).resolve())
-    common_directory = _claim_state_root(repository)
-    try:
-        requested_scope, scope_warnings = _scope_from_args(args, repository)
-    except _ScopeError as error:
-        return _invalid_scope_result(common_directory, "acquire", args, error)
-    if not _claim_id_is_safe_worktree_component(args.claim_id):
-        return _invalid_identifier_result(common_directory, args)
-
-    _ensure_mutable_claim_state(repository, "acquire", args.claim_id)
-
     with _locked_registry(repository, "acquire", args.claim_id) as (registry_path, data, registry_file):
+        common_directory = registry_path.parent
+        try:
+            requested_scope, scope_warnings = _scope_from_args(args, repository)
+        except _ScopeError as error:
+            return _invalid_scope_result(common_directory, "acquire", args, error)
+        except _WorkItemError as error:
+            return _invalid_work_item_result(
+                common_directory,
+                "acquire",
+                args,
+                error,
+            )
+        if not _scope_has_values(requested_scope):
+            error = _ScopeError(
+                "Acquisition requires a work item, file, tree, broad file domain, or named resource.",
+                "none",
+                "provide an Event Contract scope",
+                "missing_scope",
+            )
+            return _invalid_scope_result(common_directory, "acquire", args, error)
+        try:
+            deadline_request = _deadline_request_from_args(
+                args,
+                requested_scope["resources"],
+                repository,
+            )
+        except _DeadlineError as error:
+            return _invalid_deadline_result(common_directory, "acquire", args, error)
+        if not _claim_id_is_safe_worktree_component(args.claim_id):
+            return _invalid_identifier_result(common_directory, args)
+
         claims: list[dict[str, Any]] = data["claims"]
         if any(claim.get("claim_id") == args.claim_id for claim in claims):
             event = _event("acquire", "CLAIM_ID_EXISTS", args, requested_scope=requested_scope)
             return _journaled_result(ERROR, common_directory, event, claim_id=args.claim_id)
 
-        conflicts = _conflicts(claims, requested_scope)
+        conflicts = _conflicts(claims, requested_scope, repository)
         if conflicts:
             event = _event(
                 "acquire",
@@ -1588,49 +2127,19 @@ def _acquire(args: argparse.Namespace) -> int:
         if requires_primary:
             primary_worktree = _primary_worktree(repository)
             caller_is_primary = repository == primary_worktree
-            primary_is_claimed = any(
-                _claim_owns_primary_worktree(claim, primary_worktree)
-                for claim in claims
-            )
-            if not caller_is_primary or primary_is_claimed:
+            if not caller_is_primary:
                 return _primary_required_result(
                     common_directory,
                     "acquire",
                     args,
                     requested_scope,
                     scope_warnings,
-                    shared_checkout_claimed=primary_is_claimed,
                     active_claim_count=len(claims),
                 )
 
-        file_claims = [
-            claim
-            for claim in claims
-            if not _scope_is_resource_only(_claim_scope(claim))
-        ]
-        requested_uses_writer_lane = not _scope_is_resource_only(requested_scope)
-        if file_claims and requested_uses_writer_lane and not requires_primary:
+        if args.branch and not requires_primary:
             worktree_root = _canonical_worktree_root(repository)
             target_worktree = _canonical_worktree(repository, args.claim_id)
-            if not args.branch:
-                event = _event(
-                    "acquire",
-                    "ISOLATE_REQUIRED",
-                    args,
-                    requested_scope=requested_scope,
-                    active_claim_count=len(claims),
-                    command_warnings=scope_warnings,
-                )
-                return _journaled_result(
-                    ISOLATION_SETUP_EXIT_CODE,
-                    common_directory,
-                    event,
-                    scope_warnings,
-                    active_claim_count=len(claims),
-                    required_ignore_pattern=WORKTREE_IGNORE_PATTERN,
-                    suggested_worktree=str(target_worktree),
-                    worktree_root=str(worktree_root),
-                )
             if args.worktree_path:
                 provided_worktree = Path(args.worktree_path).resolve()
                 if provided_worktree != target_worktree:
@@ -1661,55 +2170,29 @@ def _acquire(args: argparse.Namespace) -> int:
             outcome = "ISOLATE"
         else:
             target_worktree = repository
-            initial_snapshot = _status_snapshot(target_worktree)
-            initial_status = _status_for_domain(
-                initial_snapshot,
-                requested_scope["file_domain"],
-                resource_only=_scope_is_resource_only(requested_scope),
-            )
-            if initial_status and not args.allow_recovery:
-                event = _event(
-                    "acquire",
-                    "RECOVERY_REQUIRED",
-                    args,
-                    requested_scope=requested_scope,
-                    dirty_paths=_status_paths(initial_status),
-                    command_warnings=scope_warnings,
-                )
-                return _journaled_result(
-                    RECOVERY_AUTHORIZATION_EXIT_CODE,
-                    common_directory,
-                    event,
-                    scope_warnings,
-                    dirty_status=initial_status,
-                )
-            mode = "recovery" if initial_status else "primary"
-            outcome = "RECOVER" if initial_status else "PRIMARY"
+            mode = "primary"
+            outcome = "PRIMARY"
 
         now = _timestamp()
-        baseline_snapshot = _status_snapshot(target_worktree)
-        baseline_state = _status_state(target_worktree, baseline_snapshot)
+        deadline = (
+            _deadline_from_request(deadline_request, now)
+            if deadline_request is not None
+            else None
+        )
         claim = {
             "agent": args.agent,
             "backlog": requested_scope["backlog"],
             "all_files": requested_scope["all_files"],
             "baseline_commit": _head(target_worktree),
-            "baseline_status": _status_for_domain(
-                baseline_snapshot,
-                requested_scope["file_domain"],
-                resource_only=_scope_is_resource_only(requested_scope),
-            ),
-            "baseline_out_of_domain_status": _status_outside_domain(
-                baseline_snapshot,
-                requested_scope["file_domain"],
-            ),
-            "baseline_out_of_domain_state": _state_outside_domain(
-                baseline_state,
-                requested_scope["file_domain"],
-            ),
             "branch": _branch(target_worktree),
+            "checkout_topology": (
+                "primary"
+                if target_worktree == _primary_worktree(repository)
+                else "linked"
+            ),
             "claim_id": args.claim_id,
             "claimed_at": now,
+            "incarnation_id": str(uuid4()),
             "files": requested_scope["files"],
             "file_domain": requested_scope["file_domain"],
             "heartbeat": now,
@@ -1723,6 +2206,12 @@ def _acquire(args: argparse.Namespace) -> int:
             "trees": requested_scope["trees"],
             "worktree": str(target_worktree),
         }
+        if requested_scope["work_item_id"] is not None:
+            claim["acquisition_outcome"] = _canonical_outcome(outcome)
+            claim["work_item_id"] = requested_scope["work_item_id"]
+            claim["activity"] = requested_scope["activity"]
+        if deadline is not None:
+            claim["deadline"] = deadline
         claims.append(claim)
         _write_registry(registry_file, data)
         event = _event(
@@ -1740,14 +2229,19 @@ def _acquire(args: argparse.Namespace) -> int:
             scope_warnings,
             claim=claim,
             registry=str(registry_path),
-            target={"mode": mode, "branch": claim["branch"], "worktree": str(target_worktree)},
+            target={
+                "mode": mode,
+                "branch": claim["branch"],
+                "checkout_topology": claim["checkout_topology"],
+                "worktree": str(target_worktree),
+            },
         )
 
 
 def _extend(args: argparse.Namespace) -> int:
     repository = _repository_root(Path(args.repo).resolve())
-    with _locked_registry(repository, "extend", args.claim_id) as (_registry_path_value, data, registry_file):
-        common_directory = _claim_state_root(repository)
+    with _locked_registry(repository, "extend", args.claim_id) as (registry_path, data, registry_file):
+        common_directory = registry_path.parent
         try:
             requested_scope, scope_warnings = _scope_from_args(args, repository)
         except _ScopeError as error:
@@ -1757,6 +2251,55 @@ def _extend(args: argparse.Namespace) -> int:
         if claim is None:
             event = _event("extend", "CLAIM_NOT_FOUND", args, requested_scope=requested_scope)
             return _journaled_result(ERROR, common_directory, event, claim_id=args.claim_id)
+        if claim.get("work_item_id") is not None and _scope_has_values(requested_scope):
+            error = _WorkItemError(
+                "A work-item claim cannot be extended with path or resource scope; acquire a separate operational claim.",
+                "work_item_id",
+                "work_item_operational_extension",
+            )
+            return _invalid_work_item_result(
+                common_directory,
+                "extend",
+                args,
+                error,
+                claim,
+            )
+        if (
+            _scope_is_resource_only(_claim_scope(claim))
+            and requested_scope["file_domain"] in {"backlog", "all_files"}
+        ):
+            error = _ScopeError(
+                "A resource-only claim cannot be extended into backlog ownership.",
+                requested_scope["file_domain"],
+                "acquire a separate backlog claim from the primary worktree",
+                "resource_only_backlog_extension",
+            )
+            return _invalid_scope_result(common_directory, "extend", args, error)
+
+        current_resources = [str(resource) for resource in claim.get("resources", [])]
+        requested_resources = requested_scope["resources"]
+        if requested_resources and current_resources and requested_resources != current_resources:
+            error = _DeadlineError(
+                "A claim that owns one named resource cannot add a second named resource.",
+                "resource",
+                "second_resource_not_supported",
+            )
+            return _invalid_deadline_result(common_directory, "extend", args, error, claim)
+        try:
+            deadline_request = _deadline_request_from_args(
+                args,
+                requested_resources,
+                repository,
+            )
+        except _DeadlineError as error:
+            return _invalid_deadline_result(common_directory, "extend", args, error, claim)
+        if requested_resources and current_resources and not isinstance(claim.get("deadline"), dict):
+            error = _DeadlineError(
+                "The existing named resource has no complete timing evidence.",
+                "deadline",
+                "resource_timing_missing",
+            )
+            return _invalid_deadline_result(common_directory, "extend", args, error, claim)
 
         if claim.get("mode") == "isolated" and requested_scope.get("file_domain") in {
             "backlog",
@@ -1769,14 +2312,26 @@ def _extend(args: argparse.Namespace) -> int:
                 requested_scope,
                 scope_warnings,
                 claim=claim,
-                shared_checkout_claimed=_shared_checkout_is_claimed(repository, claims),
             )
 
         try:
-            already_owned, added = _owned_and_added_scope(claim, requested_scope)
+            already_owned, added = _owned_and_added_scope(
+                claim,
+                requested_scope,
+                repository,
+            )
         except _ScopeError as error:
             return _invalid_scope_result(common_directory, "extend", args, error)
-        conflicts = _conflicts(claims, added, excluded_claim_id=args.claim_id) if _scope_has_values(added) else []
+        conflicts = (
+            _conflicts(
+                claims,
+                added,
+                repository,
+                excluded_claim_id=args.claim_id,
+            )
+            if _scope_has_values(added)
+            else []
+        )
         if conflicts:
             event = _event(
                 "extend",
@@ -1800,18 +2355,7 @@ def _extend(args: argparse.Namespace) -> int:
                 already_owned_scope=already_owned,
             )
 
-        primary_worktree = _primary_worktree(repository)
-        claim_worktree = Path(claim["worktree"]).resolve()
-        primary_file_writer_exists = any(
-            other.get("claim_id") != args.claim_id
-            and _claim_owns_primary_worktree(other, primary_worktree)
-            for other in claims
-        )
-        if (
-            _scope_file_domain(added) != "none"
-            and claim_worktree == primary_worktree
-            and primary_file_writer_exists
-        ):
+        if _checkout_topology(claim) == "linked" and _scope_requires_primary_worktree(added):
             return _primary_required_result(
                 common_directory,
                 "extend",
@@ -1819,26 +2363,16 @@ def _extend(args: argparse.Namespace) -> int:
                 requested_scope,
                 scope_warnings,
                 claim=claim,
-                shared_checkout_claimed=True,
-                added_scope=added,
-                already_owned_scope=already_owned,
-            )
-
-        if claim.get("mode") == "isolated" and _scope_requires_primary_worktree(added):
-            return _primary_required_result(
-                common_directory,
-                "extend",
-                args,
-                requested_scope,
-                scope_warnings,
-                claim=claim,
-                shared_checkout_claimed=_shared_checkout_is_claimed(repository, claims),
                 added_scope=added,
                 already_owned_scope=already_owned,
             )
 
         if _scope_has_values(added):
             _apply_scope(claim, added)
+            if added["resources"]:
+                if deadline_request is None:
+                    raise RuntimeError("Timed resource validation did not produce deadline evidence.")
+                claim["deadline"] = _deadline_from_request(deadline_request, _timestamp())
             _write_registry(registry_file, data)
         event = _event(
             "extend",
@@ -1863,8 +2397,8 @@ def _extend(args: argparse.Namespace) -> int:
 
 def _heartbeat(args: argparse.Namespace) -> int:
     repository = _repository_root(Path(args.repo).resolve())
-    with _locked_registry(repository, "heartbeat", args.claim_id) as (_registry_path_value, data, registry_file):
-        common_directory = _claim_state_root(repository)
+    with _locked_registry(repository, "heartbeat", args.claim_id) as (registry_path, data, registry_file):
+        common_directory = registry_path.parent
         for claim in data["claims"]:
             if claim.get("claim_id") == args.claim_id:
                 claim["heartbeat"] = _timestamp()
@@ -1875,168 +2409,237 @@ def _heartbeat(args: argparse.Namespace) -> int:
         return _journaled_result(ERROR, common_directory, event, claim_id=args.claim_id)
 
 
+def _extend_deadline(args: argparse.Namespace) -> int:
+    repository = _repository_root(Path(args.repo).resolve())
+    with _locked_registry(repository, "extend-deadline", args.claim_id) as (registry_path, data, registry_file):
+        common_directory = registry_path.parent
+        claim = next(
+            (item for item in data["claims"] if item.get("claim_id") == args.claim_id),
+            None,
+        )
+        if claim is None:
+            event = _event("extend-deadline", "CLAIM_NOT_FOUND", args)
+            return _journaled_result(ERROR, common_directory, event, claim_id=args.claim_id)
+        deadline = claim.get("deadline")
+        if not isinstance(deadline, dict):
+            error = _DeadlineError(
+                "claim has no configured resource deadline to extend.",
+                "claim_id",
+                "deadline_not_configured",
+            )
+            return _invalid_deadline_result(
+                common_directory,
+                "extend-deadline",
+                args,
+                error,
+                claim,
+            )
+
+        requested = args.requested_hard_stop_duration_seconds
+        current = deadline["requested_hard_stop_duration_seconds"]
+        maximum = deadline["configured_maximum_duration_seconds"]
+        evidence = args.extension_evidence.strip()
+        if requested <= current:
+            error = _DeadlineError(
+                "extended hard stop must be greater than the current requested hard stop.",
+                "requested_hard_stop_duration_seconds",
+                "hard_stop_not_extended",
+            )
+            return _invalid_deadline_result(common_directory, "extend-deadline", args, error, claim)
+        if requested > maximum:
+            error = _DeadlineError(
+                "extended hard stop must not exceed configured maximum.",
+                "requested_hard_stop_duration_seconds",
+                "hard_stop_exceeds_maximum",
+            )
+            return _invalid_deadline_result(common_directory, "extend-deadline", args, error, claim)
+        if not evidence or len(evidence) > MAX_EXTENSION_EVIDENCE_LENGTH:
+            error = _DeadlineError(
+                f"extension evidence must contain 1 to {MAX_EXTENSION_EVIDENCE_LENGTH} characters.",
+                "extension_evidence",
+                "invalid_extension_evidence",
+            )
+            return _invalid_deadline_result(common_directory, "extend-deadline", args, error, claim)
+
+        extended_at = _timestamp()
+        acquired_at = _parse_timestamp(str(deadline["acquired_at"]))
+        hard_stop_at = acquired_at + timedelta(seconds=requested)
+        extension = {
+            "extended_at": extended_at,
+            "previous_requested_hard_stop_duration_seconds": current,
+            "requested_hard_stop_duration_seconds": requested,
+            "evidence": evidence,
+        }
+        deadline["requested_hard_stop_duration_seconds"] = requested
+        deadline["hard_stop_at"] = _format_timestamp(hard_stop_at)
+        deadline["cleanup_grace_ends_at"] = _format_timestamp(
+            hard_stop_at + timedelta(seconds=deadline["cleanup_grace_seconds"])
+        )
+        deadline.setdefault("extensions", []).append(extension)
+        _write_registry(registry_file, data)
+        event = _event(
+            "extend-deadline",
+            "DEADLINE_EXTENDED",
+            args,
+            claim=claim,
+            deadline_extension=extension,
+        )
+        return _journaled_result(
+            SUCCESS,
+            common_directory,
+            event,
+            claim=claim,
+            deadline_extension=extension,
+        )
+
+
 def _release(args: argparse.Namespace) -> int:
     repository = _repository_root(Path(args.repo).resolve())
-    with _locked_registry(repository, "release", args.claim_id) as (_registry_path_value, data, registry_file):
-        common_directory = _claim_state_root(repository)
+    with _locked_registry(repository, "release", args.claim_id) as (registry_path, data, registry_file):
+        common_directory = registry_path.parent
         claims: list[dict[str, Any]] = data["claims"]
         for index, claim in enumerate(claims):
             if claim.get("claim_id") != args.claim_id:
                 continue
-            worktree = Path(claim["worktree"])
-            current_snapshot = _status_snapshot(worktree)
-            file_domain = str(claim.get("file_domain") or _legacy_file_domain(claim))
-            compatibility: dict[str, Any] | None = None
-            complete_worktree_release = (
-                "file_domain" not in claim
-                or not isinstance(claim.get("baseline_out_of_domain_state"), dict)
-            )
-            if complete_worktree_release:
-                compatibility = {
-                    "release_policy": "complete_worktree",
-                    "legacy_registry_claim": "file_domain" not in claim,
-                    "missing_out_of_domain_baseline": not isinstance(
-                        claim.get("baseline_out_of_domain_state"),
-                        dict,
+            work_item_id = claim.get("work_item_id")
+            if work_item_id is not None:
+                try:
+                    disposition = args.disposition
+                    blocker_reference = args.blocker_reference
+                    if disposition not in {"done", "blocked", "handoff"}:
+                        raise _WorkItemError(
+                            "Work-item release requires disposition done, blocked, or handoff.",
+                            "disposition",
+                            (
+                                "disposition_required"
+                                if disposition is None
+                                else "invalid_disposition"
+                            ),
+                        )
+                    if disposition == "blocked":
+                        if (
+                            blocker_reference is not None
+                            and not _valid_blocker_reference(blocker_reference)
+                        ):
+                            raise _WorkItemError(
+                                "blocker_reference must be a canonical non-empty single-line value of at most 200 characters.",
+                                "blocker_reference",
+                                "invalid_blocker_reference",
+                            )
+                    elif blocker_reference is not None:
+                        raise _WorkItemError(
+                            "blocker_reference is allowed only for blocked disposition.",
+                            "blocker_reference",
+                            "blocker_reference_not_allowed",
+                        )
+                except _WorkItemError as error:
+                    return _invalid_work_item_result(
+                        common_directory,
+                        "release",
+                        args,
+                        error,
+                        claim,
+                    )
+            elif args.disposition is not None or args.blocker_reference is not None:
+                return _invalid_work_item_result(
+                    common_directory,
+                    "release",
+                    args,
+                    _WorkItemError(
+                        "Work-item release fields require a work-item claim.",
+                        "disposition",
+                        "work_item_claim_required",
                     ),
-                }
-            owned_status = _status_for_domain(
-                current_snapshot,
-                "all_files" if complete_worktree_release else file_domain,
-                resource_only=(
-                    not complete_worktree_release
-                    and _scope_is_resource_only(_claim_scope(claim))
-                ),
-            )
-            if owned_status:
-                event = _event(
-                    "release",
-                    "RELEASE_REJECTED",
-                    args,
-                    claim=claim,
-                    reason="worktree_not_clean",
-                    compatibility=compatibility,
+                    claim,
                 )
-                return _journaled_result(
-                    ERROR,
-                    common_directory,
-                    event,
-                    reason="worktree_not_clean",
-                    dirty_status=owned_status,
-                    compatibility=compatibility,
-                )
-            if not complete_worktree_release and not _scope_is_resource_only(_claim_scope(claim)):
-                outside_status = _status_outside_domain(current_snapshot, file_domain)
-                baseline_outside_status = sorted(
-                    claim.get("baseline_out_of_domain_status", []),
-                    key=lambda entry: entry["path"] if isinstance(entry, dict) else str(entry),
-                )
-                current_outside_state = _state_outside_domain(
-                    _status_state(worktree, current_snapshot),
-                    file_domain,
-                )
-                baseline_outside_state = claim["baseline_out_of_domain_state"]
-                changed_paths = sorted(
-                    path
-                    for path in set(current_outside_state) | set(baseline_outside_state)
-                    if current_outside_state.get(path) != baseline_outside_state.get(path)
-                )
-            else:
-                outside_status = []
-                baseline_outside_status = []
-                changed_paths = []
-            if changed_paths:
-                event = _event(
-                    "release",
-                    "RELEASE_REJECTED",
-                    args,
-                    claim=claim,
-                    reason="out_of_domain_changes",
-                    out_of_domain_paths=changed_paths,
-                )
-                return _journaled_result(
-                    ERROR,
-                    common_directory,
-                    event,
-                    reason="out_of_domain_changes",
-                    out_of_domain_paths=changed_paths,
-                    baseline_out_of_domain_status=baseline_outside_status,
-                    current_out_of_domain_status=outside_status,
-                )
-            resulting_commit = _head(worktree)
-            try:
-                committed_paths = _committed_paths(
-                    worktree,
-                    str(claim["baseline_commit"]),
-                    resulting_commit,
-                )
-            except ValueError as error:
-                event = _event(
-                    "release",
-                    "RELEASE_REJECTED",
-                    args,
-                    claim=claim,
-                    resulting_commit=resulting_commit,
-                    reason=str(error),
-                )
-                return _journaled_result(ERROR, common_directory, event, reason=str(error))
-            outside_commit_paths = (
-                []
-                if complete_worktree_release
-                else [
-                    path for path in committed_paths if not _path_belongs_to_domain(path, file_domain)
-                ]
-            )
-            if outside_commit_paths:
-                event = _event(
-                    "release",
-                    "RELEASE_REJECTED",
-                    args,
-                    claim=claim,
-                    resulting_commit=resulting_commit,
-                    reason="out_of_domain_commit",
-                    out_of_domain_paths=outside_commit_paths,
-                )
-                return _journaled_result(
-                    ERROR,
-                    common_directory,
-                    event,
-                    reason="out_of_domain_commit",
-                    out_of_domain_paths=outside_commit_paths,
-                )
-            if resulting_commit == claim.get("baseline_commit") and not args.no_change:
-                event = _event(
-                    "release",
-                    "RELEASE_REJECTED",
-                    args,
-                    claim=claim,
-                    resulting_commit=resulting_commit,
-                    reason="missing_commit_or_no_change",
-                )
-                return _journaled_result(ERROR, common_directory, event, reason="missing_commit_or_no_change")
             released = claims.pop(index)
-            _write_registry(registry_file, data)
+            release_details = (
+                {
+                    "disposition": args.disposition,
+                    "blocker_reference": args.blocker_reference,
+                }
+                if work_item_id is not None
+                else {}
+            )
             event = _event(
                 "release",
                 "RELEASED",
                 args,
                 claim=released,
-                resulting_commit=resulting_commit,
-                no_change=args.no_change,
+                **release_details,
             )
-            return _journaled_result(SUCCESS, common_directory, event, claim=released)
+            _write_registry(registry_file, data)
+            try:
+                journal_path = _append_event(common_directory, event)
+            except OSError as error:
+                claims.insert(index, released)
+                _write_registry(registry_file, data)
+                _print_result(
+                    "RELEASE_ERROR",
+                    journal={"event_id": event["event_id"], "persisted": False},
+                    reason="journal_write_failed",
+                    message=str(error),
+                    claim_id=args.claim_id,
+                )
+                return ERROR
+            _print_result(
+                event["outcome"],
+                journal={"event_id": event["event_id"], "path": str(journal_path)},
+                claim=released,
+                **release_details,
+            )
+            return SUCCESS
         event = _event("release", "CLAIM_NOT_FOUND", args)
-        return _journaled_result(ERROR, common_directory, event, claim_id=args.claim_id)
+        return _journaled_result(
+            ERROR,
+            common_directory,
+            event,
+            claim_id=args.claim_id,
+        )
+
+
+def _reset(args: argparse.Namespace) -> int:
+    repository = _repository_root(Path(args.repo).resolve())
+    with _locked_registry_file(repository, "reset") as (registry_path, registry_file):
+        previous_valid = True
+        previous_claim_count = 0
+        try:
+            registry_file.seek(0)
+            raw_registry = registry_file.read()
+            previous = json.loads(raw_registry) if raw_registry else {"claims": []}
+            if not isinstance(previous, dict) or not isinstance(previous.get("claims"), list):
+                raise ValueError
+            claims = previous["claims"]
+            previous_claim_count = len(claims)
+        except (json.JSONDecodeError, ValueError):
+            previous_valid = False
+        _write_registry(registry_file, {"claims": []})
+        common_directory = registry_path.parent
+        event = _event(
+            "reset",
+            "RESET",
+            args,
+            previous_registry_valid=previous_valid,
+            removed_claim_count=previous_claim_count if previous_valid else None,
+        )
+        return _journaled_result(
+            SUCCESS,
+            common_directory,
+            event,
+            registry=str(registry_path),
+            claims=[],
+        )
 
 
 def _status_command(args: argparse.Namespace) -> int:
     repository = _repository_root(Path(args.repo).resolve())
-    with _read_locked_registry(repository) as (registry_path, data):
-        _print_result(
-            "STATUS",
-            registry=str(registry_path),
-            claims=[_claim_for_output(claim) for claim in data["claims"]],
-        )
+    registry_path, data = _read_only_registry(repository)
+    evaluated_at = _now()
+    _print_result(
+        "STATUS",
+        registry=str(registry_path),
+        claims=[_claim_for_output(claim, evaluated_at) for claim in data["claims"]],
+    )
     return SUCCESS
 
 
@@ -2046,7 +2649,17 @@ def _event_sort_key(event: dict[str, Any]) -> tuple[str, str]:
 
 def _read_jsonl(raw: bytes, source: str, coverage_gaps: list[dict[str, str]]) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
-    for line_number, raw_line in enumerate(raw.decode("utf-8").splitlines(), start=1):
+    try:
+        decoded = raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        coverage_gaps.append(
+            {
+                "source": source,
+                "detail": f"invalid UTF-8 at byte {error.start}",
+            }
+        )
+        return events
+    for line_number, raw_line in enumerate(decoded.splitlines(), start=1):
         if not raw_line.strip():
             continue
         try:
@@ -2129,6 +2742,7 @@ def _aggregate(
     broad_scope_count = 0
     broad_file_domains: Counter[str] = Counter()
     integration_resources: Counter[str] = Counter()
+    successful_exact_file_adoptions: Counter[str] = Counter()
     journal_warning_count = 0
 
     for index, event in enumerate(ordered):
@@ -2181,6 +2795,13 @@ def _aggregate(
 
         requested = event.get("requested_scopes") or {}
         if outcome in {*successful_outcomes, "EXTENDED"}:
+            adopted_scope = (
+                requested
+                if outcome in successful_outcomes
+                else event.get("added_scope") or {}
+            )
+            for file_path in adopted_scope.get("files", []):
+                successful_exact_file_adoptions[str(file_path)] += 1
             if (
                 requested.get("trees")
                 or requested.get("project_files")
@@ -2244,6 +2865,9 @@ def _aggregate(
             },
             "reasons": _top_counts(broad_reasons),
         },
+        "successful_scope_adoptions": {
+            "exact_files": _top_counts(successful_exact_file_adoptions),
+        },
         "open_claim_ids": sorted(live_by_id),
         "claims_with_missing_release": missing_releases,
         "stale_heartbeat_claim_ids": stale_claims,
@@ -2285,7 +2909,7 @@ def _gzip_bytes(raw: bytes) -> bytes:
 
 def _atomic_write(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
         temporary.write_bytes(content)
         os.replace(temporary, path)
@@ -2309,60 +2933,60 @@ def _write_validated_archive(path: Path, compressed: bytes, expected_raw: bytes)
 
 def _maintain_journal(args: argparse.Namespace) -> int:
     repository = _repository_root(Path(args.repo).resolve())
-    _ensure_mutable_claim_state(repository, "maintain-journal", None)
-    common_directory = _claim_state_root(repository)
     if args.hot_days < 1:
         _print_result("INVALID_HOT_DAYS", hot_days=args.hot_days)
         return ERROR
-    _root, hot_directory, archive_directory, journal_directory = _journal_paths(common_directory)
     cutoff = _now().date() - timedelta(days=args.hot_days - 1)
     archived: list[dict[str, Any]] = []
     try:
-        with _maintenance_lock(common_directory):
-            candidates = sorted(hot_directory.glob("*.jsonl")) if hot_directory.exists() else []
-            for hot_path in candidates:
-                match = UTC_DAY_PATTERN.match(hot_path.name)
-                if not match:
-                    continue
-                day_text = match.group(1)
-                day = date.fromisoformat(day_text)
-                if day >= cutoff:
-                    continue
-                raw = hot_path.read_bytes()
-                coverage_gaps: list[dict[str, str]] = []
-                events = _read_jsonl(raw, str(hot_path), coverage_gaps)
-                if coverage_gaps:
-                    raise ValueError(f"Cannot archive invalid journal {hot_path}: {coverage_gaps}")
+        with _locked_registry(repository, "maintain-journal") as (registry_path, _data, _registry_file):
+            state_root = registry_path.parent
+            _root, hot_directory, archive_directory, journal_directory = _journal_paths(state_root)
+            with _maintenance_lock(state_root):
+                candidates = sorted(hot_directory.glob("*.jsonl")) if hot_directory.exists() else []
+                for hot_path in candidates:
+                    match = UTC_DAY_PATTERN.match(hot_path.name)
+                    if not match:
+                        continue
+                    day_text = match.group(1)
+                    day = date.fromisoformat(day_text)
+                    if day >= cutoff:
+                        continue
+                    raw = hot_path.read_bytes()
+                    coverage_gaps: list[dict[str, str]] = []
+                    events = _read_jsonl(raw, str(hot_path), coverage_gaps)
+                    if coverage_gaps:
+                        raise ValueError(f"Cannot archive invalid journal {hot_path}: {coverage_gaps}")
 
-                year, month, _day = day_text.split("-")
-                archive_path = archive_directory / year / month / f"{day_text}.jsonl.gz"
-                summary_path = journal_directory / year / month / f"{day_text}.json"
-                compressed = _gzip_bytes(raw)
+                    year, month, _day = day_text.split("-")
+                    archive_path = archive_directory / year / month / f"{day_text}.jsonl.gz"
+                    summary_path = journal_directory / year / month / f"{day_text}.json"
+                    compressed = _gzip_bytes(raw)
 
-                if archive_path.exists():
+                    if archive_path.exists():
+                        if gzip.decompress(archive_path.read_bytes()) != raw:
+                            raise ValueError(f"Existing immutable archive does not match {hot_path}")
+                    else:
+                        _write_validated_archive(archive_path, compressed, raw)
                     if gzip.decompress(archive_path.read_bytes()) != raw:
-                        raise ValueError(f"Existing immutable archive does not match {hot_path}")
-                else:
-                    _write_validated_archive(archive_path, compressed, raw)
-                if gzip.decompress(archive_path.read_bytes()) != raw:
-                    raise ValueError(f"Archive validation failed for {archive_path}")
+                        raise ValueError(f"Archive validation failed for {archive_path}")
 
-                summary = _daily_summary(day_text, events)
-                rendered_summary = (json.dumps(summary, indent=2, sort_keys=True) + "\n").encode("utf-8")
-                if summary_path.exists():
-                    if summary_path.read_bytes() != rendered_summary:
-                        raise ValueError(f"Existing immutable summary does not match {hot_path}")
-                else:
-                    _atomic_write(summary_path, rendered_summary)
-                hot_path.unlink()
-                archived.append(
-                    {
-                        "date": day_text,
-                        "event_count": len(events),
-                        "archive": str(archive_path),
-                        "summary": str(summary_path),
-                    }
-                )
+                    summary = _daily_summary(day_text, events)
+                    rendered_summary = (json.dumps(summary, indent=2, sort_keys=True) + "\n").encode("utf-8")
+                    if summary_path.exists():
+                        if summary_path.read_bytes() != rendered_summary:
+                            raise ValueError(f"Existing immutable summary does not match {hot_path}")
+                    else:
+                        _atomic_write(summary_path, rendered_summary)
+                    hot_path.unlink()
+                    archived.append(
+                        {
+                            "date": day_text,
+                            "event_count": len(events),
+                            "archive": str(archive_path),
+                            "summary": str(summary_path),
+                        }
+                    )
     except (OSError, ValueError) as error:
         _print_result("JOURNAL_MAINTENANCE_FAILED", message=str(error), archived=archived)
         return ERROR
@@ -2383,6 +3007,11 @@ def _since_delta(value: str) -> timedelta:
 def _render_text_report(report: dict[str, Any]) -> str:
     metrics = report["metrics"]
     acquisitions = metrics["successful_acquisitions"]
+    exact_file_adoptions = metrics["successful_scope_adoptions"]["exact_files"]
+    rendered_exact_file_adoptions = ", ".join(
+        f"{item['scope']}={item['count']}"
+        for item in exact_file_adoptions
+    ) or "none"
     durations = metrics["claim_duration_seconds"]
     return "\n".join(
         (
@@ -2390,6 +3019,7 @@ def _render_text_report(report: dict[str, Any]) -> str:
             f"Events: {report['event_count']}",
             "Acquisitions: "
             f"primary={acquisitions['primary']} isolated={acquisitions['isolated']} recovery={acquisitions['recovery']}",
+            f"Successful exact-file adoptions: {rendered_exact_file_adoptions}",
             f"Wait attempts: {metrics['wait_attempt_count']} in {len(metrics['wait_episodes'])} episodes",
             "Claim duration seconds: "
             f"median={durations['median']} p95={durations['p95']} maximum={durations['maximum']}",
@@ -2397,6 +3027,172 @@ def _render_text_report(report: dict[str, Any]) -> str:
             f"Coverage gaps: {len(report['coverage_gaps'])}",
         )
     )
+
+
+def _work_item_report(
+    events: Sequence[dict[str, Any]],
+    live_claims: Sequence[dict[str, Any]],
+    start: datetime,
+    end: datetime,
+) -> dict[str, Any]:
+    successful_acquisitions = {
+        "SHARED_CHECKOUT_ACQUIRED",
+        "ISOLATED_CHECKOUT_ACQUIRED",
+        "DIRTY_CHECKOUT_RECOVERY_ACQUIRED",
+    }
+    live_identities = {
+        (str(claim.get("claim_id") or ""), str(claim.get("incarnation_id") or ""))
+        for claim in live_claims
+        if claim.get("work_item_id")
+    }
+    segments_by_work_item: dict[str, list[dict[str, Any]]] = {}
+    open_by_identity: dict[tuple[str, str], dict[str, Any]] = {}
+    open_by_work_item: dict[str, list[dict[str, Any]]] = {}
+    missing_release_event_ids: list[str] = []
+    release_without_acquisition_event_ids: list[str] = []
+    contradictory_event_ids: list[str] = []
+    historical_non_work_item_event_ids: list[str] = []
+
+    def in_window(event: dict[str, Any]) -> bool:
+        timestamp = _parse_timestamp(str(event.get("timestamp")))
+        return start <= timestamp <= end
+
+    for event in sorted(events, key=_event_sort_key):
+        event_id = str(event.get("event_id") or "")
+        work_item_id = event.get("work_item_id")
+        if not isinstance(work_item_id, str) or not work_item_id:
+            if in_window(event):
+                historical_non_work_item_event_ids.append(event_id)
+            continue
+        action = str(event.get("action") or "")
+        outcome = _canonical_outcome(str(event.get("outcome") or ""))
+        identity = (
+            str(event.get("claim_id") or ""),
+            str(event.get("incarnation_id") or ""),
+        )
+        if action == "acquire" and outcome in successful_acquisitions:
+            activity = event.get("activity")
+            if activity not in {"work", "update"} or open_by_work_item.get(work_item_id):
+                if in_window(event):
+                    contradictory_event_ids.append(event_id)
+                continue
+            segment = {
+                "work_item_id": work_item_id,
+                "claim_id": identity[0],
+                "incarnation_id": identity[1] or None,
+                "owner": event.get("agent"),
+                "root_task_id": event.get("root_task_id"),
+                "activity": activity,
+                "acquired_at": event.get("timestamp"),
+                "released_at": None,
+                "disposition": None,
+                "blocker_reference": None,
+                "duration_seconds": None,
+                "open": True,
+                "live": identity in live_identities,
+                "acquisition_event_id": event_id,
+                "release_event_id": None,
+            }
+            segments_by_work_item.setdefault(work_item_id, []).append(segment)
+            open_by_identity[identity] = segment
+            open_by_work_item.setdefault(work_item_id, []).append(segment)
+        elif action == "release" and outcome == "RELEASED":
+            segment = open_by_identity.get(identity)
+            if segment is None:
+                if in_window(event):
+                    release_without_acquisition_event_ids.append(event_id)
+                continue
+            disposition = event.get("disposition")
+            blocker_reference = event.get("blocker_reference")
+            contradictory = (
+                work_item_id != segment["work_item_id"]
+                or event.get("activity") != segment["activity"]
+                or event.get("agent") != segment["owner"]
+                or event.get("root_task_id") != segment["root_task_id"]
+                or disposition not in {"done", "blocked", "handoff"}
+                or (
+                    disposition == "blocked"
+                    and blocker_reference is not None
+                    and not _valid_blocker_reference(blocker_reference)
+                )
+                or disposition != "blocked" and blocker_reference is not None
+            )
+            if contradictory:
+                if in_window(event):
+                    contradictory_event_ids.append(event_id)
+                continue
+            released_at = str(event.get("timestamp"))
+            segment["released_at"] = released_at
+            segment["disposition"] = disposition
+            segment["blocker_reference"] = blocker_reference
+            segment["duration_seconds"] = max(
+                0.0,
+                (
+                    _parse_timestamp(released_at)
+                    - _parse_timestamp(str(segment["acquired_at"]))
+                ).total_seconds(),
+            )
+            segment["open"] = False
+            segment["live"] = False
+            segment["release_event_id"] = event_id
+            open_by_identity.pop(identity, None)
+            open_by_work_item[work_item_id].remove(segment)
+            if not open_by_work_item[work_item_id]:
+                open_by_work_item.pop(work_item_id)
+
+    for segments in segments_by_work_item.values():
+        for segment in segments:
+            identity = (
+                str(segment["claim_id"] or ""),
+                str(segment["incarnation_id"] or ""),
+            )
+            segment["live"] = identity in live_identities
+            acquired_at = _parse_timestamp(str(segment["acquired_at"]))
+            if segment["open"] and not segment["live"] and acquired_at <= end:
+                missing_release_event_ids.append(str(segment["acquisition_event_id"]))
+
+    filtered_items: list[dict[str, Any]] = []
+    for work_item_id, segments in sorted(segments_by_work_item.items()):
+        visible_segments = []
+        for segment in segments:
+            acquired_at = _parse_timestamp(str(segment["acquired_at"]))
+            released_at = (
+                _parse_timestamp(str(segment["released_at"]))
+                if segment["released_at"] is not None
+                else None
+            )
+            if acquired_at <= end and (released_at is None or released_at >= start):
+                rendered = dict(segment)
+                rendered.pop("work_item_id")
+                visible_segments.append(rendered)
+        if visible_segments:
+            filtered_items.append(
+                {
+                    "work_item_id": work_item_id,
+                    "segments": sorted(
+                        visible_segments,
+                        key=lambda segment: (
+                            str(segment["acquired_at"]),
+                            str(segment["claim_id"]),
+                        ),
+                    ),
+                }
+            )
+
+    return {
+        "schema_version": WORK_ITEM_REPORT_SCHEMA_VERSION,
+        "items": filtered_items,
+        "diagnostics": {
+            "missing_release_event_ids": sorted(missing_release_event_ids),
+            "release_without_acquisition_event_ids": sorted(
+                release_without_acquisition_event_ids
+            ),
+            "contradictory_event_ids": sorted(contradictory_event_ids),
+            "historical_non_work_item_event_ids": sorted(
+                historical_non_work_item_event_ids
+            ),
+        },
+    }
 
 
 def _report(args: argparse.Namespace) -> int:
@@ -2408,15 +3204,21 @@ def _report(args: argparse.Namespace) -> int:
         return ERROR
     end = _now()
     start = end - delta
-    with _read_locked_registry(repository) as (registry_path, data):
-        live_claims = [dict(claim) for claim in data["claims"]]
-    state = _migration_state(repository)
-    if state is None and _legacy_event_root(repository).is_dir():
-        event_state_root = _git_common_directory(repository)
-    else:
-        event_state_root = registry_path.parent
+    registry_path, data = _read_only_registry(repository)
+    legacy_events = _git_common_directory(repository) / EVENT_DIRECTORY_NAME
+    state_marker = _state_marker(repository)
+    event_state_root = (
+        _git_common_directory(repository)
+        if state_marker is None and legacy_events.is_dir()
+        else registry_path.parent
+    )
     events, coverage_gaps = _load_events(event_state_root)
-    filtered = [event for event in events if start <= _parse_timestamp(str(event["timestamp"])) <= end]
+    filtered = [
+        event
+        for event in events
+        if start <= _parse_timestamp(str(event["timestamp"])) <= end
+    ]
+    live_claims = [dict(claim) for claim in data["claims"]]
     acquired_claim_ids = {
         str(event.get("claim_id"))
         for event in events
@@ -2438,6 +3240,7 @@ def _report(args: argparse.Namespace) -> int:
         "window": {"since": args.since, "start": _format_timestamp(start), "end": _format_timestamp(end)},
         "event_count": len(filtered),
         "metrics": _aggregate(filtered, end, live_claims),
+        "work_items": _work_item_report(events, live_claims, start, end),
         "coverage_gaps": coverage_gaps,
     }
     if args.format == "text":
@@ -2455,6 +3258,13 @@ def _add_scope_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Claim every project file except the primary-only backlog and ignored operational state.",
     )
+
+
+def _add_resource_timing_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--resource-class")
+    parser.add_argument("--resource-id")
+    parser.add_argument("--expected-duration-seconds", type=int)
+    parser.add_argument("--requested-hard-stop-duration-seconds", type=int)
     parser.add_argument(
         "--backlog",
         action="store_true",
@@ -2468,7 +3278,7 @@ def _add_scope_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--resource", action="append", default=[], help="Exclusive repository-global runtime resource.")
     parser.add_argument(
         "--scope-reason",
-        help="Bounded coordination-only reason required for tree, project-files, or all-files scope.",
+        help="Bounded coordination-only reason required for tree or broad file-domain scope.",
     )
     parser.add_argument(
         "--compat-file-directories",
@@ -2482,12 +3292,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo", default=".", help="Path inside the repository.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    acquire = subparsers.add_parser("acquire", help="Atomically acquire primary, isolated, or recovery ownership.")
+    acquire = subparsers.add_parser("acquire", help="Atomically acquire scoped ownership.")
     acquire.add_argument("--claim-id", required=True)
     acquire.add_argument("--agent", required=True)
     acquire.add_argument("--task", required=True)
     acquire.add_argument("--root-task-id", required=True)
     acquire.add_argument("--parent-claim-id")
+    acquire.add_argument("--work-item-id")
+    acquire.add_argument("--activity")
     _add_scope_arguments(acquire)
     acquire.add_argument("--branch")
     acquire.add_argument(
@@ -2495,22 +3307,40 @@ def _parser() -> argparse.ArgumentParser:
         help="Compatibility input that must equal the canonical primary-root .worktrees target.",
     )
     acquire.add_argument("--base", default="HEAD")
-    acquire.add_argument("--allow-recovery", action="store_true")
+    _add_resource_timing_arguments(acquire)
     acquire.set_defaults(handler=_acquire)
 
     extend = subparsers.add_parser("extend", help="Atomically add files, trees, or resources to an active claim.")
     extend.add_argument("--claim-id", required=True)
     _add_scope_arguments(extend)
+    _add_resource_timing_arguments(extend)
     extend.set_defaults(handler=_extend)
 
     heartbeat = subparsers.add_parser("heartbeat", help="Refresh an active claim heartbeat.")
     heartbeat.add_argument("--claim-id", required=True)
     heartbeat.set_defaults(handler=_heartbeat)
 
-    release = subparsers.add_parser("release", help="Release a committed clean claim or a declared no-change claim.")
+    extend_deadline = subparsers.add_parser(
+        "extend-deadline",
+        help="Extend one configured resource hard stop with bounded evidence.",
+    )
+    extend_deadline.add_argument("--claim-id", required=True)
+    extend_deadline.add_argument(
+        "--requested-hard-stop-duration-seconds",
+        required=True,
+        type=int,
+    )
+    extend_deadline.add_argument("--extension-evidence", required=True)
+    extend_deadline.set_defaults(handler=_extend_deadline)
+
+    release = subparsers.add_parser("release", help="Remove one exact live claim and journal its release.")
     release.add_argument("--claim-id", required=True)
-    release.add_argument("--no-change", action="store_true")
+    release.add_argument("--disposition")
+    release.add_argument("--blocker-reference")
     release.set_defaults(handler=_release)
+
+    reset = subparsers.add_parser("reset", help="Replace the live claim registry with an empty claim list.")
+    reset.set_defaults(handler=_reset)
 
     status = subparsers.add_parser("status", help="Show the repository-global live claim registry.")
     status.set_defaults(handler=_status_command)
@@ -2544,14 +3374,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _execute(args: argparse.Namespace) -> int:
     try:
         return args.handler(args)
-    except _ClaimStateMigrationStop as error:
+    except _ClaimStateError as error:
         _print_result(
             "CLAIM_STATE_MIGRATION_BLOCKED",
             reason=error.reason,
-            canonical_registry=str(error.canonical_registry),
-            legacy_registry=str(error.legacy_registry),
-            legacy_claim_ids=error.legacy_claim_ids,
+            message=str(error),
             registry_unchanged=True,
+            **error.details,
         )
         return COORDINATION_REQUIRED_EXIT_CODE
 

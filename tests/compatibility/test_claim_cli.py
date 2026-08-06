@@ -1,12 +1,11 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Verifies copied claim coordination, journaling, reporting, isolation, recovery, and release compatibility.
+# Summary: Verifies current claim command, migration-marker, work-item, deadline, reset, and report compatibility.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
 from __future__ import annotations
 
-import gzip
 import json
 import os
 import subprocess
@@ -15,12 +14,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 CLAIM_MODULE = "mcp_agent_ops.adapters.cli.claims"
+AUTHORITY_CLAIM_SCRIPT = os.environ.get("MCP_AGENT_OPS_AUTHORITY_CLAIM_SCRIPT")
+RESOURCE_CLASSES = (
+    "backlog-mutation",
+    "main-integration",
+    "browser-server",
+    "database-port",
+    "live-model-evaluation",
+)
 
 
 class AgentClaimTests(unittest.TestCase):
-    """Exercises the public claim command against temporary linked Git worktrees."""
+    """Exercise the public claim CLI against temporary Git repositories."""
 
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
@@ -28,7 +34,6 @@ class AgentClaimTests(unittest.TestCase):
         self.repository = Path(self.temporary_directory.name) / "repository"
         self.repository.mkdir()
         (self.repository / "src").mkdir()
-        (self.repository / "docs").mkdir()
         (self.repository / "backlog").mkdir()
         (self.repository / ".gitignore").write_text(
             "/.worktrees/\n/.codex/agent-claim/\n",
@@ -36,18 +41,36 @@ class AgentClaimTests(unittest.TestCase):
         )
         (self.repository / "README.md").write_text("baseline\n", encoding="utf-8")
         (self.repository / "src" / "one.py").write_text("one\n", encoding="utf-8")
-        (self.repository / "docs" / "guide.md").write_text("guide\n", encoding="utf-8")
         (self.repository / "backlog" / "item.md").write_text("queued\n", encoding="utf-8")
+        self.write_deadline_policy()
         self.git("init")
         self.git("config", "user.email", "test@example.invalid")
         self.git("config", "user.name", "Claim Test")
         self.git("add", ".")
         self.git("commit", "-m", "baseline")
 
-    def git(self, *arguments: str, worktree: Path | None = None) -> subprocess.CompletedProcess[str]:
-        """Run Git in the requested temporary worktree and require success."""
+    def write_deadline_policy(self) -> None:
+        """Write the exact configured resource-class policy required by claim acquisition."""
+        class_entries = "\n".join(
+            f"      {class_id}:\n"
+            "        maximum_duration_seconds: 3600\n"
+            "        cleanup_grace_seconds: 120"
+            for class_id in RESOURCE_CLASSES
+        )
+        (self.repository / "PROJECT.yaml").write_text(
+            "resource_coordination:\n"
+            "  selected: agent-claim\n"
+            "  deadline_policy:\n"
+            "    resource_classes:\n"
+            f"{class_entries}\n"
+            "    resource_overrides: {}\n",
+            encoding="utf-8",
+        )
+
+    def git(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        """Run Git in the temporary repository and require success."""
         return subprocess.run(
-            ["git", "-C", str(worktree or self.repository), *arguments],
+            ["git", "-C", str(self.repository), *arguments],
             check=True,
             text=True,
             capture_output=True,
@@ -56,27 +79,51 @@ class AgentClaimTests(unittest.TestCase):
     def claim(
         self,
         *arguments: str,
-        repo: Path | None = None,
         environment: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        """Run the bundled command with optional deterministic-clock and fault-injection variables."""
+        """Run the bundled claim command with optional deterministic environment values."""
         command_environment = os.environ.copy()
         command_environment["PYTHONDONTWRITEBYTECODE"] = "1"
         command_environment.update(environment or {})
         return subprocess.run(
-            [sys.executable, "-m", CLAIM_MODULE, "--repo", str(repo or self.repository), *arguments],
+            [
+                sys.executable,
+                "-m",
+                CLAIM_MODULE,
+                "--repo",
+                str(self.repository),
+                *arguments,
+            ],
             check=False,
             text=True,
             capture_output=True,
             env=command_environment,
         )
 
-    def claim_command(self, *arguments: str, repo: Path | None = None) -> list[str]:
-        """Build a subprocess command for concurrency tests without executing it."""
-        return [sys.executable, "-m", CLAIM_MODULE, "--repo", str(repo or self.repository), *arguments]
+    def authority_claim(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        """Run the explicitly configured source-authority helper for cross-implementation checks."""
+        if AUTHORITY_CLAIM_SCRIPT is None:
+            raise AssertionError("MCP_AGENT_OPS_AUTHORITY_CLAIM_SCRIPT is not configured")
+        return subprocess.run(
+            [
+                sys.executable,
+                AUTHORITY_CLAIM_SCRIPT,
+                "--repo",
+                str(self.repository),
+                *arguments,
+            ],
+            check=False,
+            text=True,
+            capture_output=True,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+
+    def output(self, completed: subprocess.CompletedProcess[str]) -> dict[str, object]:
+        """Decode one structured command result."""
+        return json.loads(completed.stdout)
 
     def acquire_arguments(self, claim_id: str) -> list[str]:
-        """Build the common acquisition arguments for one independent test task."""
+        """Build common acquisition arguments for one claim."""
         return [
             "acquire",
             "--claim-id",
@@ -89,223 +136,217 @@ class AgentClaimTests(unittest.TestCase):
             claim_id,
         ]
 
-    def legacy_claim(self, claim_id: str) -> dict[str, object]:
-        """Build one pre-upgrade primary-worktree claim for migration tests."""
-        return {
-            "agent": "legacy-agent",
-            "all_files": False,
-            "baseline_commit": self.git("rev-parse", "HEAD").stdout.strip(),
-            "baseline_status": [],
-            "branch": "main",
-            "claim_id": claim_id,
-            "claimed_at": "2026-07-12T10:00:00Z",
-            "files": ["README.md"],
-            "heartbeat": "2026-07-12T10:00:00Z",
-            "mode": "primary",
-            "parent_claim_id": None,
-            "resources": [],
-            "root_task_id": claim_id,
-            "scope_reasons": {},
-            "task": "pre-upgrade claim",
-            "trees": [],
-            "worktree": str(self.repository),
-        }
+    def work_item_arguments(
+        self,
+        claim_id: str,
+        work_item_id: str,
+        activity: str = "work",
+    ) -> list[str]:
+        """Build one exact work-item acquisition."""
+        return [
+            *self.acquire_arguments(claim_id),
+            "--work-item-id",
+            work_item_id,
+            "--activity",
+            activity,
+        ]
 
-    def isolated_arguments(self, claim_id: str) -> tuple[list[str], Path]:
-        """Build unique branch and worktree arguments for a later independent writer."""
-        isolated_path = self.repository / ".worktrees" / claim_id
-        return (
-            ["--branch", f"codex/{claim_id}", "--worktree-path", str(isolated_path)],
-            isolated_path,
-        )
-
-    def output(self, completed: subprocess.CompletedProcess[str]) -> dict[str, object]:
-        """Decode one structured command result."""
-        return json.loads(completed.stdout)
-
-    def common_directory(self) -> Path:
-        """Return the temporary repository's Git common directory."""
-        raw = Path(self.git("rev-parse", "--git-common-dir").stdout.strip())
-        return raw if raw.is_absolute() else self.repository / raw
-
-    def registry_path(self) -> Path:
-        """Return the repository-global live registry path."""
-        return self.state_root() / "agent-claims.json"
+    def timed_resource_arguments(self) -> list[str]:
+        """Build one valid resource claim with complete timing evidence."""
+        return [
+            "--resource",
+            "browser-test:primary",
+            "--resource-class",
+            "browser-server",
+            "--resource-id",
+            "browser-test:primary",
+            "--expected-duration-seconds",
+            "300",
+            "--requested-hard-stop-duration-seconds",
+            "600",
+        ]
 
     def state_root(self) -> Path:
-        """Return the primary-worktree claim-state root."""
+        """Return the canonical primary-worktree claim-state root."""
         return self.repository / ".codex" / "agent-claim"
 
+    def registry_path(self) -> Path:
+        """Return the canonical live registry path."""
+        return self.state_root() / "agent-claims.json"
+
+    def state_marker_path(self) -> Path:
+        """Return the canonical migration-state marker path."""
+        return self.state_root() / "state.json"
+
     def legacy_registry_path(self) -> Path:
-        """Return the pre-migration live registry path."""
-        return self.common_directory() / "agent-claims.json"
+        """Return the pre-migration registry path."""
+        return self.repository / ".git" / "agent-claims.json"
 
     def legacy_event_root(self) -> Path:
         """Return the pre-migration event-history path."""
-        return self.common_directory() / "agent-claim-events"
+        return self.repository / ".git" / "agent-claim-events"
 
-    def test_claim_update_preserves_registry_file_identity(self) -> None:
-        """Keep the repository-global lock attached to one stable registry file."""
-        registry_path = self.registry_path()
-        registry_path.parent.mkdir(parents=True)
-        registry_path.write_text('{"claims": []}\n', encoding="utf-8")
-        initial_identity = registry_path.stat().st_ino
+    def hot_directory(self) -> Path:
+        """Return the canonical hot-journal directory."""
+        return self.state_root() / "agent-claim-events" / "hot"
 
-        completed = self.claim(
-            "acquire",
-            "--claim-id",
-            "stable-registry",
-            "--agent",
-            "test-agent",
-            "--task",
-            "preserve registry identity",
-            "--root-task-id",
-            "stable-registry",
-            "--project-files",
-            "--scope-reason",
-            "verify repository-global registry locking",
-        )
-
-        self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertEqual(initial_identity, registry_path.stat().st_ino)
-
-    def test_primary_and_two_linked_worktrees_resolve_one_ignored_registry(self) -> None:
-        linked_one = Path(self.temporary_directory.name) / "linked-one"
-        linked_two = Path(self.temporary_directory.name) / "linked-two"
-        self.git("worktree", "add", "-b", "linked-one", str(linked_one), "HEAD")
-        self.git("worktree", "add", "-b", "linked-two", str(linked_two), "HEAD")
-
-        acquired = self.claim(*self.acquire_arguments("shared"), "--file", "README.md")
-        primary_status = self.output(self.claim("status"))
-        linked_one_status = self.output(self.claim("status", repo=linked_one))
-        linked_two_status = self.output(self.claim("status", repo=linked_two))
-        ignored = self.git(
-            "check-ignore",
-            "--quiet",
-            "--no-index",
-            "--",
-            ".codex/agent-claim/agent-claims.json",
-        )
-
-        self.assertEqual(0, acquired.returncode, acquired.stderr)
-        self.assertEqual(
-            [str(self.registry_path().resolve())] * 3,
-            [
-                primary_status["registry"],
-                linked_one_status["registry"],
-                linked_two_status["registry"],
-            ],
-        )
-        self.assertEqual(
-            [["shared"], ["shared"], ["shared"]],
-            [
-                [claim["claim_id"] for claim in primary_status["claims"]],
-                [claim["claim_id"] for claim in linked_one_status["claims"]],
-                [claim["claim_id"] for claim in linked_two_status["claims"]],
-            ],
-        )
-        self.assertEqual(0, ignored.returncode)
-
-    def test_status_is_lazy_when_canonical_and_legacy_state_are_absent(self) -> None:
+    def test_status_is_read_only_when_all_state_is_absent(self) -> None:
         completed = self.claim("status")
 
         self.assertEqual(0, completed.returncode, completed.stderr)
         result = self.output(completed)
+        self.assertEqual("STATUS", result["outcome"])
         self.assertEqual(str(self.registry_path().resolve()), result["registry"])
         self.assertEqual([], result["claims"])
         self.assertFalse(self.state_root().exists())
         self.assertFalse(self.legacy_registry_path().exists())
         self.assertFalse(self.legacy_event_root().exists())
 
-    def test_claim_state_is_outside_every_file_ownership_domain(self) -> None:
-        completed = self.claim(
-            *self.acquire_arguments("operational-state"),
-            "--file",
-            ".codex/agent-claim/agent-claims.json",
-        )
-
-        self.assertEqual(1, completed.returncode)
-        result = self.output(completed)
-        self.assertEqual("INVALID_SCOPE", result["outcome"])
-        self.assertEqual("operational_path_not_claimable", result["rejection"]["reason"])
-        self.assertFalse(self.registry_path().exists())
-
-    def test_empty_legacy_registry_and_history_migrate_on_first_write(self) -> None:
-        legacy_registry = self.legacy_registry_path()
-        legacy_registry.write_text('{"claims": []}\n', encoding="utf-8")
-        legacy_event = self.legacy_event_root() / "hot" / "2026-07-12.jsonl"
-        legacy_event.parent.mkdir(parents=True)
-        legacy_event.write_text("", encoding="utf-8")
-
-        completed = self.claim(*self.acquire_arguments("migrated"), "--file", "README.md")
-
-        self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertEqual(str(self.registry_path().resolve()), self.output(completed)["registry"])
-        self.assertTrue(self.registry_path().is_file())
-        self.assertTrue(self.legacy_registry_path().is_dir())
-        self.assertTrue(self.legacy_event_root().is_file())
-        self.assertTrue((self.hot_directory() / "2026-07-12.jsonl").is_file())
-
-    def test_interrupted_empty_migration_resumes_and_installs_legacy_boundaries(self) -> None:
-        self.registry_path().parent.mkdir(parents=True)
-        self.registry_path().write_text('{"claims": []}\n', encoding="utf-8")
-        self.legacy_registry_path().write_text('{"claims": []}\n', encoding="utf-8")
-        self.legacy_event_root().mkdir()
-
-        completed = self.claim(*self.acquire_arguments("resumed"), "--file", "README.md")
-
-        self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertTrue(self.legacy_registry_path().is_dir())
-        self.assertTrue(self.legacy_event_root().is_file())
-        with self.assertRaises(IsADirectoryError):
-            self.legacy_registry_path().open("r+", encoding="utf-8")
-        with self.assertRaises(FileExistsError):
-            self.legacy_event_root().mkdir(parents=True, exist_ok=True)
-
-    def test_live_legacy_claim_blocks_ordinary_operations_but_exact_release_drains_it(self) -> None:
-        legacy_registry = self.legacy_registry_path()
-        legacy_registry.write_text(
-            json.dumps({"claims": [self.legacy_claim("legacy-live")]}),
-            encoding="utf-8",
-        )
-        before = legacy_registry.read_bytes()
-
-        blocked = self.claim(*self.acquire_arguments("new"), "--file", "README.md")
-        wrong_release = self.claim("release", "--claim-id", "other", "--no-change")
-
-        self.assertEqual(3, blocked.returncode)
-        self.assertEqual(3, wrong_release.returncode)
-        for completed in (blocked, wrong_release):
-            result = self.output(completed)
-            self.assertEqual("CLAIM_STATE_MIGRATION_BLOCKED", result["outcome"])
-            self.assertEqual("legacy_live_claim_requires_release", result["reason"])
-            self.assertEqual(["legacy-live"], result["legacy_claim_ids"])
-        self.assertEqual(before, legacy_registry.read_bytes())
-        self.assertFalse(self.state_root().exists())
-
-        released = self.claim("release", "--claim-id", "legacy-live", "--no-change")
-
-        self.assertEqual(0, released.returncode, released.stderr)
-        self.assertEqual("RELEASED", self.output(released)["outcome"])
-        self.assertEqual([], json.loads(legacy_registry.read_text(encoding="utf-8"))["claims"])
-        self.assertTrue(list(self.hot_directory().glob("*.jsonl")))
-
-        acquired = self.claim(*self.acquire_arguments("new"), "--file", "README.md")
+    def test_first_mutation_writes_exact_fresh_state_contract(self) -> None:
+        acquired = self.claim(*self.acquire_arguments("fresh"), "--file", "README.md")
 
         self.assertEqual(0, acquired.returncode, acquired.stderr)
-        self.assertTrue(self.legacy_registry_path().is_dir())
-        self.assertTrue(self.legacy_event_root().is_file())
+        self.assertEqual(
+            {
+                "schema_version": 1,
+                "state_layout_version": 2,
+                "migration_status": "complete",
+                "origin": "fresh",
+            },
+            json.loads(self.state_marker_path().read_text(encoding="utf-8")),
+        )
+        self.assertFalse(self.legacy_registry_path().exists())
+        self.assertFalse(self.legacy_event_root().exists())
 
-    def test_contradictory_dual_live_state_returns_non_mutating_structured_stop(self) -> None:
+    def test_empty_legacy_state_migrates_to_exact_cross_implementation_markers(self) -> None:
+        self.legacy_registry_path().write_text('{"claims": []}\n', encoding="utf-8")
+        legacy_hot = self.legacy_event_root() / "hot"
+        legacy_hot.mkdir(parents=True)
+        (legacy_hot / "2026-08-05.jsonl").write_text("", encoding="utf-8")
+
+        acquired = self.claim(*self.acquire_arguments("migrated"), "--file", "README.md")
+
+        self.assertEqual(0, acquired.returncode, acquired.stderr)
+        self.assertEqual(
+            {
+                "schema_version": 1,
+                "state_layout_version": 2,
+                "migration_status": "complete",
+                "origin": "legacy",
+            },
+            json.loads(self.state_marker_path().read_text(encoding="utf-8")),
+        )
+        self.assertTrue(self.legacy_registry_path().is_dir())
+        self.assertEqual(
+            {
+                "schema_version": 1,
+                "state_layout_version": 2,
+                "migrated": "registry",
+            },
+            json.loads(
+                (self.legacy_registry_path() / "state.json").read_text(encoding="utf-8")
+            ),
+        )
+        self.assertTrue(self.legacy_event_root().is_file())
+        self.assertEqual(
+            {
+                "schema_version": 1,
+                "state_layout_version": 2,
+                "migrated": "events",
+            },
+            json.loads(self.legacy_event_root().read_text(encoding="utf-8")),
+        )
+        status = self.claim("status")
+        self.assertEqual(0, status.returncode, status.stderr)
+        self.assertEqual(["migrated"], [claim["claim_id"] for claim in self.output(status)["claims"]])
+
+    def test_command_helper_marker_fixture_is_accepted_without_rewrite(self) -> None:
+        self.state_root().mkdir(parents=True)
+        self.registry_path().write_text('{"claims": []}\n', encoding="utf-8")
+        self.state_marker_path().write_text(
+            json.dumps({
+                "schema_version": 1,
+                "state_layout_version": 2,
+                "migration_status": "complete",
+                "origin": "legacy",
+            }) + "\n",
+            encoding="utf-8",
+        )
+        self.legacy_registry_path().mkdir()
+        (self.legacy_registry_path() / "state.json").write_text(
+            json.dumps({
+                "schema_version": 1,
+                "state_layout_version": 2,
+                "migrated": "registry",
+            }, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        self.legacy_event_root().write_text(
+            json.dumps({
+                "schema_version": 1,
+                "state_layout_version": 2,
+                "migrated": "events",
+            }, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        before = {
+            path: path.read_bytes()
+            for path in (
+                self.registry_path(),
+                self.state_marker_path(),
+                self.legacy_registry_path() / "state.json",
+                self.legacy_event_root(),
+            )
+        }
+
+        status = self.claim("status")
+
+        self.assertEqual(0, status.returncode, status.stderr)
+        self.assertEqual("STATUS", self.output(status)["outcome"])
+        self.assertEqual(before, {path: path.read_bytes() for path in before})
+
+    @unittest.skipUnless(
+        AUTHORITY_CLAIM_SCRIPT is not None
+        and Path(AUTHORITY_CLAIM_SCRIPT).is_file(),
+        "source-authority helper is not configured",
+    )
+    def test_external_and_source_authority_share_live_state_bidirectionally(self) -> None:
+        external_acquire = self.claim(
+            *self.acquire_arguments("external-owner"),
+            "--file",
+            "README.md",
+        )
+        authority_status = self.authority_claim("status")
+        authority_release = self.authority_claim(
+            "release",
+            "--claim-id",
+            "external-owner",
+        )
+        authority_acquire = self.authority_claim(
+            *self.work_item_arguments("authority-owner", "provider#cross", "update")
+        )
+        external_status = self.claim("status")
+
+        self.assertEqual(0, external_acquire.returncode, external_acquire.stderr)
+        self.assertEqual(0, authority_status.returncode, authority_status.stderr)
+        self.assertEqual(
+            ["external-owner"],
+            [claim["claim_id"] for claim in self.output(authority_status)["claims"]],
+        )
+        self.assertEqual(0, authority_release.returncode, authority_release.stderr)
+        self.assertEqual(0, authority_acquire.returncode, authority_acquire.stderr)
+        claims = self.output(external_status)["claims"]
+        self.assertEqual(["authority-owner"], [claim["claim_id"] for claim in claims])
+        self.assertEqual("provider#cross", claims[0]["work_item_id"])
+        self.assertEqual("update", claims[0]["activity"])
+
+    def test_canonical_and_any_legacy_registry_are_a_non_mutating_split_state(self) -> None:
         self.registry_path().parent.mkdir(parents=True)
         self.registry_path().write_text(
-            json.dumps({"claims": [self.legacy_claim("canonical-live")]}),
+            json.dumps({"claims": [{"claim_id": "canonical-live"}]}) + "\n",
             encoding="utf-8",
         )
-        self.legacy_registry_path().write_text(
-            json.dumps({"claims": [self.legacy_claim("legacy-live")]}),
-            encoding="utf-8",
-        )
+        self.legacy_registry_path().write_text('{"claims": []}\n', encoding="utf-8")
         canonical_before = self.registry_path().read_bytes()
         legacy_before = self.legacy_registry_path().read_bytes()
 
@@ -314,1245 +355,166 @@ class AgentClaimTests(unittest.TestCase):
         self.assertEqual(3, completed.returncode)
         result = self.output(completed)
         self.assertEqual("CLAIM_STATE_MIGRATION_BLOCKED", result["outcome"])
-        self.assertEqual("contradictory_dual_registry", result["reason"])
+        self.assertEqual("contradictory_dual_state", result["reason"])
         self.assertEqual(canonical_before, self.registry_path().read_bytes())
         self.assertEqual(legacy_before, self.legacy_registry_path().read_bytes())
 
-    def hot_directory(self) -> Path:
-        """Return the repository-global hot journal directory."""
-        return self.state_root() / "agent-claim-events" / "hot"
-
-    def journal_events(self) -> list[dict[str, object]]:
-        """Read all hot events for lifecycle and concurrency assertions."""
-        events: list[dict[str, object]] = []
-        for path in sorted(self.hot_directory().glob("*.jsonl")):
-            events.extend(json.loads(line) for line in path.read_text(encoding="utf-8").splitlines())
-        return events
-
-    def write_daily_events(self, day: str, events: list[dict[str, object]]) -> Path:
-        """Write a deterministic historical hot file for archive and report tests."""
-        self.hot_directory().mkdir(parents=True, exist_ok=True)
-        path = self.hot_directory() / f"{day}.jsonl"
-        path.write_text("".join(json.dumps(event, sort_keys=True) + "\n" for event in events), encoding="utf-8")
-        return path
-
-    def synthetic_event(
-        self,
-        event_id: str,
-        timestamp: str,
-        action: str,
-        outcome: str,
-        claim_id: str,
-        **values: object,
-    ) -> dict[str, object]:
-        """Build the minimum versioned event fixture accepted by reporting and archival."""
-        event: dict[str, object] = {
-            "schema_version": 1,
-            "event_id": event_id,
-            "timestamp": timestamp,
-            "action": action,
-            "outcome": outcome,
-            "claim_id": claim_id,
-            "journal_warnings": [],
-        }
-        event.update(values)
-        return event
-
-    def test_first_writer_claims_clean_primary_worktree(self) -> None:
-        completed = self.claim(*self.acquire_arguments("first"), "--file", "README.md")
-
-        self.assertEqual(0, completed.returncode, completed.stderr)
-        result = self.output(completed)
-        self.assertEqual(2, result["schema_version"])
-        self.assertEqual("SHARED_CHECKOUT_ACQUIRED", result["outcome"])
-        self.assertEqual("PRIMARY", result["legacy_outcome"])
-        self.assertEqual(str(self.repository.resolve()), result["claim"]["worktree"])
-        self.assertEqual("primary", result["target"]["mode"])
-
-    def test_second_independent_writer_gets_isolated_worktree(self) -> None:
-        first = self.claim(*self.acquire_arguments("first"), "--file", "README.md")
-        isolated, isolated_path = self.isolated_arguments("second")
-        second = self.claim(
-            *self.acquire_arguments("second"),
-            "--file",
-            "src/one.py",
-            *isolated,
+    def test_live_legacy_registry_is_drain_only_until_exact_release(self) -> None:
+        self.legacy_registry_path().write_text(
+            json.dumps({
+                "claims": [{
+                    "claim_id": "legacy-live",
+                    "agent": "legacy-agent",
+                    "root_task_id": "legacy-root",
+                    "task": "legacy claim",
+                    "files": ["README.md"],
+                    "trees": [],
+                    "resources": [],
+                    "claimed_at": "2026-08-05T10:00:00Z",
+                    "heartbeat": "2026-08-05T10:00:00Z",
+                }]
+            }) + "\n",
+            encoding="utf-8",
         )
 
-        self.assertEqual(0, first.returncode, first.stderr)
-        self.assertEqual(0, second.returncode, second.stderr)
-        result = self.output(second)
-        self.assertEqual("ISOLATED_CHECKOUT_ACQUIRED", result["outcome"])
-        self.assertEqual("ISOLATE", result["legacy_outcome"])
-        self.assertTrue((isolated_path / ".git").is_file())
-        self.assertFalse((isolated_path / "backlog").exists())
-
-    def test_simultaneous_writers_cannot_both_claim_primary(self) -> None:
-        commands = [self.claim_command(*self.acquire_arguments(claim_id)) for claim_id in ("first", "second")]
-        processes = [
-            subprocess.Popen(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            for command in commands
-        ]
-        completed = [process.communicate() + (process.returncode,) for process in processes]
-        outcomes = {json.loads(stdout)["outcome"] for stdout, _stderr, _code in completed}
-        return_codes = sorted(code for _stdout, _stderr, code in completed)
-
-        self.assertEqual([0, 4], return_codes)
-        self.assertEqual(
-            {"ISOLATED_CHECKOUT_SETUP_REQUIRED", "SHARED_CHECKOUT_ACQUIRED"},
-            outcomes,
-        )
-
-    def test_required_action_outcomes_keep_stable_exit_codes_and_legacy_aliases(self) -> None:
-        first = self.claim(*self.acquire_arguments("first"), "--file", "README.md")
-        isolation = self.claim(*self.acquire_arguments("isolated"), "--file", "src/one.py")
-        backlog = self.claim(*self.acquire_arguments("backlog"), "--backlog")
-        released = self.claim("release", "--claim-id", "first", "--no-change")
-        (self.repository / "README.md").write_text("dirty\n", encoding="utf-8")
-        recovery = self.claim(*self.acquire_arguments("recovery"), "--file", "README.md")
-
-        self.assertEqual(0, first.returncode, first.stderr)
-        self.assertEqual(4, isolation.returncode)
-        self.assertEqual(
-            ("ISOLATED_CHECKOUT_SETUP_REQUIRED", "ISOLATE_REQUIRED"),
-            (self.output(isolation)["outcome"], self.output(isolation)["legacy_outcome"]),
-        )
-        self.assertEqual(3, backlog.returncode)
-        self.assertEqual(
-            ("SHARED_CHECKOUT_RELEASE_REQUIRED", "PRIMARY_REQUIRED"),
-            (self.output(backlog)["outcome"], self.output(backlog)["legacy_outcome"]),
-        )
-        self.assertEqual(0, released.returncode, released.stderr)
-        self.assertEqual(5, recovery.returncode)
-        self.assertEqual(
-            (
-                "DIRTY_CHECKOUT_RECOVERY_AUTHORIZATION_REQUIRED",
-                "RECOVERY_REQUIRED",
-            ),
-            (self.output(recovery)["outcome"], self.output(recovery)["legacy_outcome"]),
-        )
-        event = next(event for event in self.journal_events() if event["claim_id"] == "backlog")
-        self.assertIs(event["shared_checkout_claimed"], True)
-
-    def test_isolated_backlog_request_requires_the_available_shared_checkout(self) -> None:
-        self.claim(*self.acquire_arguments("first"), "--file", "README.md")
-        isolated, isolated_path = self.isolated_arguments("isolated")
-        self.claim(*self.acquire_arguments("isolated"), "--file", "src/one.py", *isolated)
-        self.claim("release", "--claim-id", "first", "--no-change")
-
-        completed = self.claim(
-            *self.acquire_arguments("backlog"),
-            "--backlog",
-            repo=isolated_path,
-        )
-
-        self.assertEqual(3, completed.returncode)
-        result = self.output(completed)
-        self.assertEqual("SHARED_CHECKOUT_REQUIRED", result["outcome"])
-        self.assertEqual("PRIMARY_REQUIRED", result["legacy_outcome"])
-
-    def test_report_uses_explicit_context_when_shared_checkout_is_available(self) -> None:
-        self.claim(*self.acquire_arguments("first"), "--file", "README.md")
-        isolated, isolated_path = self.isolated_arguments("isolated")
-        self.claim(*self.acquire_arguments("isolated"), "--file", "src/one.py", *isolated)
-        self.claim("release", "--claim-id", "first", "--no-change")
-
-        required = self.claim(
-            *self.acquire_arguments("backlog"),
-            "--backlog",
-            repo=isolated_path,
-        )
-        report = self.claim("report", "--since", "2d")
-
-        self.assertEqual(3, required.returncode)
-        event = next(event for event in self.journal_events() if event["claim_id"] == "backlog")
-        self.assertIs(event["shared_checkout_claimed"], False)
-        self.assertEqual(0, report.returncode, report.stderr)
-        metrics = self.output(report)["metrics"]
-        self.assertEqual(1, metrics["outcome_counts"]["SHARED_CHECKOUT_REQUIRED"])
-        self.assertEqual(1, metrics["raw_outcome_counts"]["PRIMARY_REQUIRED"])
-        self.assertEqual([], metrics["outcome_normalization_gaps"])
-
-    def test_primary_location_resource_never_falls_through_to_isolation(self) -> None:
-        self.claim(*self.acquire_arguments("first"), "--file", "README.md")
-
-        without_branch = self.claim(
-            *self.acquire_arguments("resource-wait"),
-            "--resource",
-            "git-index:primary",
-        )
-        isolated, isolated_path = self.isolated_arguments("resource-branch")
-        with_branch = self.claim(
-            *self.acquire_arguments("resource-branch"),
-            "--resource",
-            "git-index:primary",
-            *isolated,
-        )
-
-        for completed in (without_branch, with_branch):
-            self.assertEqual(3, completed.returncode)
-            result = self.output(completed)
-            self.assertEqual("SHARED_CHECKOUT_RELEASE_REQUIRED", result["outcome"])
-            self.assertEqual("PRIMARY_REQUIRED", result["legacy_outcome"])
-            self.assertEqual(
-                "primary_location_resource_requires_primary_worktree",
-                result["reason"],
-            )
-            self.assertEqual(
-                "The requested primary-location resource is available only from the primary worktree.",
-                result["message"],
-            )
-        self.assertFalse(isolated_path.exists())
-
-    def test_resource_only_claim_does_not_force_unrelated_file_claim_into_isolation(self) -> None:
-        resource = self.claim(
-            *self.acquire_arguments("resource"),
-            "--resource",
-            "port:3000",
-        )
-
-        completed = self.claim(
-            *self.acquire_arguments("file"),
-            "--file",
-            "src/one.py",
-        )
-
-        self.assertEqual(0, resource.returncode, resource.stderr)
-        self.assertEqual(0, completed.returncode, completed.stderr)
-        result = self.output(completed)
-        self.assertEqual("SHARED_CHECKOUT_ACQUIRED", result["outcome"])
-        self.assertEqual(str(self.repository.resolve()), result["target"]["worktree"])
-
-    def test_primary_resource_only_claim_cannot_extend_into_an_occupied_file_lane(self) -> None:
-        self.claim(*self.acquire_arguments("file"), "--file", "README.md")
-        resource = self.claim(
-            *self.acquire_arguments("resource"),
-            "--resource",
-            "port:3000",
-        )
-
-        extended = self.claim(
-            "extend",
-            "--claim-id",
-            "resource",
-            "--file",
-            "src/one.py",
-        )
-
-        self.assertEqual(0, resource.returncode, resource.stderr)
-        self.assertEqual(3, extended.returncode)
-        result = self.output(extended)
-        self.assertEqual("SHARED_CHECKOUT_RELEASE_REQUIRED", result["outcome"])
-        status = self.output(self.claim("status"))["claims"]
-        stored = next(claim for claim in status if claim["claim_id"] == "resource")
-        self.assertEqual("none", stored["file_domain"])
-        self.assertEqual([], stored["files"])
-
-    def test_resource_only_claim_does_not_block_unrelated_primary_integration(self) -> None:
-        resource = self.claim(
-            *self.acquire_arguments("resource"),
-            "--resource",
-            "test:e2e",
-        )
-
-        completed = self.claim(
-            *self.acquire_arguments("integration"),
-            "--file",
-            "src/one.py",
-            "--resource",
-            "merge:integration:main",
-        )
-
-        self.assertEqual(0, resource.returncode, resource.stderr)
-        self.assertEqual(0, completed.returncode, completed.stderr)
-        result = self.output(completed)
-        self.assertEqual("SHARED_CHECKOUT_ACQUIRED", result["outcome"])
-        self.assertEqual(str(self.repository.resolve()), result["target"]["worktree"])
-
-    def test_resource_only_claim_ignores_unrelated_dirty_files(self) -> None:
-        source_path = self.repository / "src" / "one.py"
-        source_path.write_text("private worktree edit\n", encoding="utf-8")
-
-        acquired = self.claim(
-            *self.acquire_arguments("resource"),
-            "--resource",
-            "test:e2e",
-        )
-        source_path.write_text("continued private worktree edit\n", encoding="utf-8")
-        released = self.claim("release", "--claim-id", "resource", "--no-change")
-
-        self.assertEqual(0, acquired.returncode, acquired.stderr)
-        self.assertEqual(0, released.returncode, released.stderr)
-        self.assertEqual("RELEASED", self.output(released)["outcome"])
-        self.assertEqual(
-            "continued private worktree edit\n",
-            source_path.read_text(encoding="utf-8"),
-        )
-
-    def test_private_resource_only_claim_does_not_serialize_file_or_integration_claims(self) -> None:
-        self.claim(*self.acquire_arguments("primary-file"), "--file", "README.md")
-        isolated_arguments, isolated_path = self.isolated_arguments("isolated-file")
-        isolated = self.claim(
-            *self.acquire_arguments("isolated-file"),
-            "--file",
-            "src/one.py",
-            *isolated_arguments,
-        )
-        self.assertEqual(0, isolated.returncode, isolated.stderr)
-        self.claim("release", "--claim-id", "isolated-file", "--no-change")
-
-        resource = self.claim(
-            *self.acquire_arguments("private-resource"),
-            "--resource",
-            "test:e2e",
-            repo=isolated_path,
-        )
-        self.assertEqual(0, resource.returncode, resource.stderr)
-        self.assertEqual(
-            isolated_path.resolve(),
-            Path(self.output(resource)["target"]["worktree"]).resolve(),
-        )
-        self.claim("release", "--claim-id", "primary-file", "--no-change")
-
-        integration = self.claim(
-            *self.acquire_arguments("five-file-integration"),
-            "--file",
-            "README.md",
-            "--file",
-            "src/one.py",
-            "--file",
-            "docs/guide.md",
-            "--file",
-            "docs/future.md",
-            "--file",
-            "src/future.py",
-            "--resource",
-            "merge:integration:main",
-        )
-
-        self.assertEqual(0, integration.returncode, integration.stderr)
-        result = self.output(integration)
-        self.assertEqual("SHARED_CHECKOUT_ACQUIRED", result["outcome"])
-        self.assertEqual(str(self.repository.resolve()), result["target"]["worktree"])
-        self.assertFalse((self.repository / ".worktrees" / "five-file-integration").exists())
-
-    def test_exact_files_do_not_use_ancestry_overlap(self) -> None:
-        first = self.claim(*self.acquire_arguments("first"), "--file", "future")
-        isolated, _isolated_path = self.isolated_arguments("second")
-        second = self.claim(
-            *self.acquire_arguments("second"),
-            "--file",
-            "future/child.py",
-            *isolated,
-        )
-
-        self.assertEqual(0, first.returncode, first.stderr)
-        self.assertEqual(0, second.returncode, second.stderr)
-        self.assertEqual("ISOLATED_CHECKOUT_ACQUIRED", self.output(second)["outcome"])
-
-    def test_tree_and_all_files_scopes_overlap_descendants(self) -> None:
-        tree = self.claim(
-            *self.acquire_arguments("tree"),
-            "--tree",
-            "src",
-            "--scope-reason",
-            "bounded source generation",
-        )
-        isolated, blocked_path = self.isolated_arguments("blocked")
-        nested = self.claim(
-            *self.acquire_arguments("blocked"),
-            "--file",
-            "src/one.py",
-            *isolated,
-        )
-
-        self.assertEqual(0, tree.returncode, tree.stderr)
-        self.assertEqual(3, nested.returncode)
-        nested_result = self.output(nested)
-        self.assertEqual("CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED", nested_result["outcome"])
-        self.assertEqual("tree", nested_result["overlaps"][0]["claimed_kind"])
-        self.assertFalse(blocked_path.exists())
-
-        self.claim("release", "--claim-id", "tree", "--no-change")
-        all_files = self.claim(
-            *self.acquire_arguments("all"),
-            "--all-files",
-            "--scope-reason",
-            "repository migration",
-        )
-        resource = self.claim(*self.acquire_arguments("other"), "--resource", "port:3000")
-        exact = self.claim(*self.acquire_arguments("exact"), "--file", "docs/guide.md")
-        self.assertEqual(0, all_files.returncode, all_files.stderr)
-        self.assertEqual(0, resource.returncode, resource.stderr)
-        self.assertEqual("SHARED_CHECKOUT_ACQUIRED", self.output(resource)["outcome"])
-        self.assertEqual(3, exact.returncode)
-
-    def test_broad_file_domains_are_explicit_mutually_exclusive_and_reported(self) -> None:
-        invalid = self.claim(
-            *self.acquire_arguments("invalid"),
-            "--project-files",
-            "--backlog",
-            "--scope-reason",
-            "mixed broad domains",
-        )
-
-        self.assertEqual(1, invalid.returncode)
-        self.assertEqual("INVALID_SCOPE", self.output(invalid)["outcome"])
-        self.assertFalse(self.registry_path().exists())
-
-        acquired = self.claim(
-            *self.acquire_arguments("project"),
-            "--project-files",
-            "--scope-reason",
-            "project implementation",
-        )
-        result = self.output(acquired)
-        self.assertEqual(0, acquired.returncode, acquired.stderr)
-        self.assertEqual("project_files", result["claim"]["file_domain"])
-        self.assertTrue(result["claim"]["project_files"])
-        self.assertFalse(result["claim"]["backlog"])
-        self.assertEqual("project_files", self.journal_events()[-1]["scopes"]["file_domain"])
-
-    def test_explicit_paths_derive_one_file_domain_and_mixed_paths_fail_atomically(self) -> None:
-        mixed = self.claim(
-            *self.acquire_arguments("mixed"),
-            "--file",
-            "README.md",
-            "--file",
-            "backlog/item.md",
-        )
-
-        self.assertEqual(1, mixed.returncode)
-        result = self.output(mixed)
-        self.assertEqual("INVALID_SCOPE", result["outcome"])
-        self.assertEqual("use separate project and backlog claims", result["replacement"])
-        self.assertFalse(self.registry_path().exists())
-
-        backlog = self.claim(*self.acquire_arguments("backlog"), "--file", "backlog/item.md")
-        self.assertEqual(0, backlog.returncode, backlog.stderr)
-        backlog_result = self.output(backlog)
-        self.assertEqual("backlog", backlog_result["claim"]["file_domain"])
-        self.assertEqual("compat_backlog_path", backlog_result["warnings"][0]["code"])
-
-    def test_project_files_and_backlog_have_domain_specific_overlap(self) -> None:
-        project = self.claim(
-            *self.acquire_arguments("project"),
-            "--project-files",
-            "--scope-reason",
-            "project implementation",
-        )
-        self.assertEqual(0, project.returncode, project.stderr)
-
-        blocked_project = self.claim(*self.acquire_arguments("blocked"), "--file", "src/one.py")
-        backlog = self.claim(*self.acquire_arguments("backlog"), "--backlog")
-        self.assertEqual(3, blocked_project.returncode)
-        self.assertEqual(
-            "CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED",
-            self.output(blocked_project)["outcome"],
-        )
-        self.assertEqual(3, backlog.returncode)
-        backlog_result = self.output(backlog)
-        self.assertEqual("SHARED_CHECKOUT_RELEASE_REQUIRED", backlog_result["outcome"])
-        self.assertEqual("PRIMARY_REQUIRED", backlog_result["legacy_outcome"])
-        self.assertEqual(["project"], [claim["claim_id"] for claim in self.output(self.claim("status"))["claims"]])
-
-    def test_unchanged_out_of_domain_dirtiness_is_not_owned_but_changes_block_release(self) -> None:
-        (self.repository / "backlog" / "item.md").write_text("preexisting\n", encoding="utf-8")
-        acquired = self.claim(
-            *self.acquire_arguments("project"),
-            "--project-files",
-            "--scope-reason",
-            "project implementation",
-        )
-        self.assertEqual(0, acquired.returncode, acquired.stderr)
-        self.assertEqual("SHARED_CHECKOUT_ACQUIRED", self.output(acquired)["outcome"])
-
-        (self.repository / "README.md").write_text("implemented\n", encoding="utf-8")
-        self.git("add", "README.md")
-        self.git("commit", "-m", "project implementation")
-        unchanged_release = self.claim("release", "--claim-id", "project")
-        self.assertEqual(0, unchanged_release.returncode, unchanged_release.stderr)
-
-        acquired_again = self.claim(
-            *self.acquire_arguments("project-again"),
-            "--project-files",
-            "--scope-reason",
-            "project implementation",
-        )
-        self.assertEqual(0, acquired_again.returncode, acquired_again.stderr)
-        (self.repository / "backlog" / "item.md").write_text("changed during claim\n", encoding="utf-8")
-        rejected = self.claim("release", "--claim-id", "project-again", "--no-change")
-        rejected_result = self.output(rejected)
-        self.assertEqual(1, rejected.returncode)
-        self.assertEqual("RELEASE_REJECTED", rejected_result["outcome"])
-        self.assertEqual("out_of_domain_changes", rejected_result["reason"])
-        self.assertEqual(["backlog/item.md"], rejected_result["out_of_domain_paths"])
-
-    def test_committed_out_of_domain_change_blocks_release(self) -> None:
-        acquired = self.claim(*self.acquire_arguments("backlog"), "--backlog")
-        self.assertEqual(0, acquired.returncode, acquired.stderr)
-        (self.repository / "README.md").write_text("outside\n", encoding="utf-8")
-        self.git("add", "README.md")
-        self.git("commit", "-m", "outside backlog")
-
-        rejected = self.claim("release", "--claim-id", "backlog")
-        result = self.output(rejected)
-        self.assertEqual(1, rejected.returncode)
-        self.assertEqual("out_of_domain_commit", result["reason"])
-        self.assertEqual(["README.md"], result["out_of_domain_paths"])
-
-    def test_project_claim_rejects_backlog_commit_reverted_later_in_history(self) -> None:
-        acquired = self.claim(
-            *self.acquire_arguments("project"),
-            "--project-files",
-            "--scope-reason",
-            "project implementation",
-        )
-        self.assertEqual(0, acquired.returncode, acquired.stderr)
-        backlog_path = self.repository / "backlog" / "item.md"
-        backlog_path.write_text("temporary\n", encoding="utf-8")
-        self.git("add", "backlog/item.md")
-        self.git("commit", "-m", "temporary backlog change")
-        backlog_path.write_text("queued\n", encoding="utf-8")
-        self.git("add", "backlog/item.md")
-        self.git("commit", "-m", "restore backlog")
-
-        released = self.claim("release", "--claim-id", "project")
-
-        self.assertEqual(1, released.returncode)
-        result = self.output(released)
-        self.assertEqual("out_of_domain_commit", result["reason"])
-        self.assertEqual(["backlog/item.md"], result["out_of_domain_paths"])
-
-    @unittest.skipIf(os.name == "nt", "Windows filenames cannot contain newlines or quotes.")
-    def test_nul_git_paths_remain_in_the_backlog_domain(self) -> None:
-        changed_path = self.repository / "backlog" / 'odd\n" café -> name.md'
-        unchanged_path = self.repository / "backlog" / "unchanged\nitem.md"
-        changed_path.write_text("before\n", encoding="utf-8")
-        unchanged_path.write_text("unchanged\n", encoding="utf-8")
-        acquired = self.claim(
-            *self.acquire_arguments("project"),
-            "--project-files",
-            "--scope-reason",
-            "project implementation",
-        )
-        self.assertEqual(0, acquired.returncode, acquired.stderr)
-        changed_path.write_text("after\n", encoding="utf-8")
-
-        released = self.claim("release", "--claim-id", "project", "--no-change")
-
-        self.assertEqual(1, released.returncode)
-        self.assertEqual(
-            ['backlog/odd\n" café -> name.md'],
-            self.output(released)["out_of_domain_paths"],
-        )
-
-    @unittest.skipIf(os.name == "nt", "Windows filenames cannot contain newlines or quotes.")
-    def test_committed_path_scan_is_nul_safe(self) -> None:
-        acquired = self.claim(
-            *self.acquire_arguments("project"),
-            "--project-files",
-            "--scope-reason",
-            "project implementation",
-        )
-        self.assertEqual(0, acquired.returncode, acquired.stderr)
-        odd_path = self.repository / "backlog" / 'committed\n" café -> name.md'
-        odd_path.write_text("committed\n", encoding="utf-8")
-        self.git("add", str(odd_path))
-        self.git("commit", "-m", "commit odd backlog path")
-
-        released = self.claim("release", "--claim-id", "project")
-
-        self.assertEqual(1, released.returncode)
-        self.assertEqual(
-            ['backlog/committed\n" café -> name.md'],
-            self.output(released)["out_of_domain_paths"],
-        )
-
-    def test_status_and_extend_preserve_active_legacy_mixed_claim(self) -> None:
-        legacy_claim = {
-            "agent": "legacy",
-            "all_files": False,
-            "baseline_commit": self.git("rev-parse", "HEAD").stdout.strip(),
-            "baseline_status": [],
-            "branch": "main",
-            "claim_id": "legacy-mixed",
-            "claimed_at": "2026-07-12T10:00:00Z",
-            "files": ["src/one.py", "backlog/item.md"],
-            "heartbeat": "2026-07-12T10:00:00Z",
-            "mode": "primary",
-            "parent_claim_id": None,
-            "resources": [],
-            "root_task_id": "legacy-root",
-            "scope_reasons": {},
-            "task": "legacy mixed claim",
-            "trees": [],
-            "worktree": str(self.repository),
-        }
-        self.registry_path().parent.mkdir(parents=True)
-        self.registry_path().write_text(json.dumps({"claims": [legacy_claim]}), encoding="utf-8")
-
-        status = self.output(self.claim("status"))["claims"][0]
-        extended = self.claim("extend", "--claim-id", "legacy-mixed", "--file", "docs/guide.md")
-        stored = json.loads(self.registry_path().read_text(encoding="utf-8"))["claims"][0]
-
-        self.assertEqual("legacy_mixed", status["file_domain"])
-        self.assertEqual("complete_worktree", status["compatibility"]["release_policy"])
-        self.assertEqual(1, extended.returncode)
-        self.assertEqual("legacy_mixed_file_domains", self.output(extended)["rejection"]["reason"])
-        self.assertNotIn("file_domain", stored)
-
-    def test_legacy_missing_domain_baseline_keeps_complete_worktree_release(self) -> None:
-        acquired = self.claim(*self.acquire_arguments("legacy"), "--file", "src/one.py")
-        self.assertEqual(0, acquired.returncode, acquired.stderr)
-        registry = json.loads(self.registry_path().read_text(encoding="utf-8"))
-        claim = registry["claims"][0]
-        claim.pop("file_domain")
-        claim.pop("baseline_out_of_domain_state")
-        claim.pop("baseline_out_of_domain_status")
-        self.registry_path().write_text(json.dumps(registry), encoding="utf-8")
-        (self.repository / "backlog" / "item.md").write_text("changed\n", encoding="utf-8")
-
-        released = self.claim("release", "--claim-id", "legacy", "--no-change")
-
-        self.assertEqual(1, released.returncode)
-        result = self.output(released)
-        self.assertEqual("worktree_not_clean", result["reason"])
-        self.assertEqual("complete_worktree", result["compatibility"]["release_policy"])
-
-    def test_legacy_resource_only_claim_reports_none_and_accepts_a_file_domain(self) -> None:
-        legacy_claim = {
-            "agent": "legacy",
-            "all_files": False,
-            "baseline_commit": self.git("rev-parse", "HEAD").stdout.strip(),
-            "baseline_status": [],
-            "branch": "main",
-            "claim_id": "legacy-resource",
-            "claimed_at": "2026-07-12T10:00:00Z",
-            "files": [],
-            "heartbeat": "2026-07-12T10:00:00Z",
-            "mode": "primary",
-            "parent_claim_id": None,
-            "resources": ["port:3000"],
-            "root_task_id": "legacy-root",
-            "scope_reasons": {},
-            "task": "legacy resource claim",
-            "trees": [],
-            "worktree": str(self.repository),
-        }
-        self.registry_path().parent.mkdir(parents=True)
-        self.registry_path().write_text(json.dumps({"claims": [legacy_claim]}), encoding="utf-8")
-
-        status = self.output(self.claim("status"))["claims"][0]
-        extended = self.claim(
-            "extend",
-            "--claim-id",
-            "legacy-resource",
-            "--file",
-            "src/one.py",
-        )
-
-        self.assertEqual("none", status["file_domain"])
-        self.assertEqual("complete_worktree", status["compatibility"]["release_policy"])
-        self.assertEqual(0, extended.returncode, extended.stderr)
-        claim = self.output(extended)["claim"]
-        self.assertEqual("project_files", claim["file_domain"])
-        self.assertEqual(["src/one.py"], claim["files"])
-        self.assertEqual(["port:3000"], claim["resources"])
-        (self.repository / "backlog" / "item.md").write_text("legacy committed\n", encoding="utf-8")
-        self.git("add", "backlog/item.md")
-        self.git("commit", "-m", "legacy complete worktree commit")
-
-        released = self.claim("release", "--claim-id", "legacy-resource")
-
-        self.assertEqual(0, released.returncode, released.stderr)
-        self.assertEqual("RELEASED", self.output(released)["outcome"])
-
-    def test_broad_scope_guardrails_and_future_file_behavior(self) -> None:
-        invalid_commands = (
-            (["--file", "."], "use --all-files"),
-            (["--file", "**"], "use --tree"),
-            (["--file", "src"], "use --tree"),
-            (["--tree", "README.md", "--scope-reason", "wrong kind"], "use --file"),
-            (["--tree", ".", "--scope-reason", "too broad"], "use --all-files"),
-            (["--tree", "src"], "add --scope-reason"),
-        )
-        for index, (scope_arguments, replacement) in enumerate(invalid_commands):
-            with self.subTest(scope_arguments=scope_arguments):
-                completed = self.claim(*self.acquire_arguments(f"invalid-{index}"), *scope_arguments)
-                self.assertEqual(1, completed.returncode)
-                result = self.output(completed)
-                self.assertEqual("INVALID_SCOPE", result["outcome"])
-                self.assertIn(replacement, result["replacement"])
-
-        future = self.claim(*self.acquire_arguments("future"), "--file", "not-created-yet.py")
-        self.assertEqual(0, future.returncode, future.stderr)
-
-    def test_compatibility_mode_converts_directory_file_scope_with_warning(self) -> None:
-        completed = self.claim(
-            *self.acquire_arguments("legacy"),
-            "--file",
-            "src",
-            "--compat-file-directories",
-            "--scope-reason",
-            "temporary legacy caller",
-        )
-
-        self.assertEqual(0, completed.returncode, completed.stderr)
-        result = self.output(completed)
-        self.assertEqual(["src"], result["claim"]["trees"])
-        self.assertEqual("legacy_file_directory_scope", result["warnings"][0]["code"])
-
-    def test_extend_adds_multiple_scopes_and_is_idempotent(self) -> None:
-        acquired = self.claim(*self.acquire_arguments("first"), "--file", "README.md")
-        extended = self.claim(
-            "extend",
-            "--claim-id",
-            "first",
-            "--file",
-            "future.py",
-            "--resource",
-            "generated:codegen",
-        )
-        repeated = self.claim(
-            "extend",
-            "--claim-id",
-            "first",
-            "--file",
-            "future.py",
-            "--resource",
-            "generated:codegen",
-        )
-
-        self.assertEqual(0, acquired.returncode, acquired.stderr)
-        self.assertEqual(0, extended.returncode, extended.stderr)
-        added = self.output(extended)["added_scope"]
-        self.assertEqual(["future.py"], added["files"])
-        self.assertEqual(["generated:codegen"], added["resources"])
-        repeated_result = self.output(repeated)
-        self.assertEqual("EXTENDED", repeated_result["outcome"])
-        self.assertEqual([], repeated_result["added_scope"]["files"])
-        self.assertEqual(["future.py"], repeated_result["already_owned_scope"]["files"])
-
-    def test_conflicting_extension_leaves_registry_byte_for_byte_unchanged(self) -> None:
-        self.claim(*self.acquire_arguments("first"), "--file", "README.md")
-        isolated, _isolated_path = self.isolated_arguments("second")
-        self.claim(*self.acquire_arguments("second"), "--file", "src/one.py", *isolated)
-        before = self.registry_path().read_bytes()
-
-        blocked = self.claim("extend", "--claim-id", "second", "--file", "README.md")
-
+        blocked = self.claim(*self.acquire_arguments("new"), "--file", "src/one.py")
         self.assertEqual(3, blocked.returncode)
-        self.assertEqual(
-            "CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED",
-            self.output(blocked)["outcome"],
-        )
-        self.assertEqual(before, self.registry_path().read_bytes())
-
-    def test_isolated_extension_reports_primary_resource_overlap_before_location(self) -> None:
-        self.claim(
-            *self.acquire_arguments("first"),
-            "--resource",
-            "merge:integration:main",
-        )
-        isolated, _isolated_path = self.isolated_arguments("second")
-        self.claim(*self.acquire_arguments("second"), "--file", "src/one.py", *isolated)
-        before = self.registry_path().read_bytes()
-
-        blocked = self.claim(
-            "extend",
-            "--claim-id",
-            "second",
-            "--resource",
-            "merge:integration:main",
-        )
-
-        self.assertEqual(3, blocked.returncode)
-        result = self.output(blocked)
-        self.assertEqual("CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED", result["outcome"])
-        self.assertEqual(["first"], result["conflicting_claim_ids"])
-        self.assertEqual(before, self.registry_path().read_bytes())
-
-    def test_simultaneous_extensions_cannot_both_acquire_same_file(self) -> None:
-        self.claim(*self.acquire_arguments("first"), "--file", "README.md")
-        isolated, _isolated_path = self.isolated_arguments("second")
-        self.claim(*self.acquire_arguments("second"), "--file", "src/one.py", *isolated)
-        commands = [
-            self.claim_command("extend", "--claim-id", claim_id, "--file", "shared-new.py")
-            for claim_id in ("first", "second")
-        ]
-        processes = [
-            subprocess.Popen(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            for command in commands
-        ]
-        completed = [process.communicate() + (process.returncode,) for process in processes]
-
-        self.assertEqual([0, 3], sorted(code for _stdout, _stderr, code in completed))
-        self.assertEqual(
-            {"CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED", "EXTENDED"},
-            {json.loads(stdout)["outcome"] for stdout, _stderr, _code in completed},
-        )
-
-    def test_extending_isolated_claim_preserves_worktree_metadata(self) -> None:
-        self.claim(*self.acquire_arguments("first"), "--file", "README.md")
-        isolated, _isolated_path = self.isolated_arguments("second")
-        acquired = self.claim(*self.acquire_arguments("second"), "--file", "src/one.py", *isolated)
-        before = self.output(acquired)["claim"]
-
-        extended = self.claim("extend", "--claim-id", "second", "--file", "future.py")
-        after = self.output(extended)["claim"]
-
-        for field in ("worktree", "branch", "baseline_commit", "claimed_at", "mode"):
-            self.assertEqual(before[field], after[field])
-
-    def test_isolated_backlog_extension_reports_active_shared_checkout(self) -> None:
-        self.claim(*self.acquire_arguments("first"), "--file", "README.md")
-        isolated, isolated_path = self.isolated_arguments("second")
-        self.claim(*self.acquire_arguments("second"), "--file", "src/one.py", *isolated)
-        before = self.registry_path().read_bytes()
-
-        completed = self.claim(
-            "extend",
-            "--claim-id",
-            "second",
-            "--file",
-            "backlog/item.md",
-            repo=isolated_path,
-        )
-        report = self.claim("report", "--since", "2d")
-
-        self.assertEqual(3, completed.returncode)
-        result = self.output(completed)
-        self.assertEqual("SHARED_CHECKOUT_RELEASE_REQUIRED", result["outcome"])
-        self.assertEqual("PRIMARY_REQUIRED", result["legacy_outcome"])
-        self.assertEqual(before, self.registry_path().read_bytes())
-        event = next(
-            event
-            for event in self.journal_events()
-            if event["claim_id"] == "second" and event["outcome"] == "PRIMARY_REQUIRED"
-        )
-        self.assertIs(event["shared_checkout_claimed"], True)
-        self.assertEqual(0, report.returncode, report.stderr)
-        metrics = self.output(report)["metrics"]
-        self.assertEqual(1, metrics["outcome_counts"]["SHARED_CHECKOUT_RELEASE_REQUIRED"])
-        self.assertEqual(1, metrics["raw_outcome_counts"]["PRIMARY_REQUIRED"])
-        self.assertEqual([], metrics["outcome_normalization_gaps"])
-
-    def test_isolated_backlog_extension_reports_available_shared_checkout(self) -> None:
-        self.claim(*self.acquire_arguments("first"), "--file", "README.md")
-        isolated, isolated_path = self.isolated_arguments("second")
-        self.claim(*self.acquire_arguments("second"), "--file", "src/one.py", *isolated)
-        self.claim("release", "--claim-id", "first", "--no-change")
-
-        completed = self.claim(
-            "extend",
-            "--claim-id",
-            "second",
-            "--file",
-            "backlog/item.md",
-            repo=isolated_path,
-        )
-
-        self.assertEqual(3, completed.returncode)
-        self.assertEqual("SHARED_CHECKOUT_REQUIRED", self.output(completed)["outcome"])
-        event = next(
-            event
-            for event in self.journal_events()
-            if event["claim_id"] == "second" and event["outcome"] == "PRIMARY_REQUIRED"
-        )
-        self.assertIs(event["shared_checkout_claimed"], False)
-
-    def test_isolated_primary_resource_extension_reports_active_shared_checkout(self) -> None:
-        self.claim(*self.acquire_arguments("first"), "--file", "README.md")
-        isolated, isolated_path = self.isolated_arguments("second")
-        self.claim(*self.acquire_arguments("second"), "--file", "src/one.py", *isolated)
-
-        completed = self.claim(
-            "extend",
-            "--claim-id",
-            "second",
-            "--resource",
-            "git-index:primary",
-            repo=isolated_path,
-        )
-
-        self.assertEqual(3, completed.returncode)
-        result = self.output(completed)
-        self.assertEqual("SHARED_CHECKOUT_RELEASE_REQUIRED", result["outcome"])
-        self.assertEqual("primary_location_resource_requires_primary_worktree", result["reason"])
-        event = next(
-            event
-            for event in self.journal_events()
-            if event["claim_id"] == "second" and event["outcome"] == "PRIMARY_REQUIRED"
-        )
-        self.assertIs(event["shared_checkout_claimed"], True)
-
-    def test_linked_worktrees_share_one_journal(self) -> None:
-        self.claim(*self.acquire_arguments("first"), "--file", "README.md")
-        isolated, isolated_path = self.isolated_arguments("second")
-        self.claim(*self.acquire_arguments("second"), "--file", "src/one.py", *isolated)
-        third_arguments, _third_path = self.isolated_arguments("third")
-        third = self.claim(
-            *self.acquire_arguments("third"),
-            "--file",
-            "docs/guide.md",
-            *third_arguments,
-            repo=isolated_path,
-        )
-        heartbeat = self.claim("heartbeat", "--claim-id", "second", repo=isolated_path)
-
-        self.assertEqual(0, third.returncode, third.stderr)
-        self.assertEqual(0, heartbeat.returncode, heartbeat.stderr)
-        events = self.journal_events()
-        self.assertEqual(["first", "second", "third", "second"], [event["claim_id"] for event in events])
-        self.assertEqual(1, len(list(self.hot_directory().glob("*.jsonl"))))
-        linked_event = next(event for event in events if event["claim_id"] == "third")
-        self.assertEqual("codex/third", linked_event["worktree_id"])
-        self.assertNotIn(str(self.temporary_directory.name), json.dumps(linked_event))
-
-    def test_concurrent_journal_events_are_complete_and_unique(self) -> None:
-        self.claim(*self.acquire_arguments("first"), "--file", "README.md")
-        commands = [self.claim_command("heartbeat", "--claim-id", "first") for _index in range(12)]
-        processes = [
-            subprocess.Popen(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            for command in commands
-        ]
-        completed = [process.communicate() + (process.returncode,) for process in processes]
-
-        self.assertTrue(all(code == 0 for _stdout, _stderr, code in completed))
-        events = self.journal_events()
-        self.assertEqual(13, len(events))
-        self.assertEqual(13, len({event["event_id"] for event in events}))
-
-    def test_journal_failure_warns_without_weakening_registry_safety(self) -> None:
-        completed = self.claim(
-            *self.acquire_arguments("first"),
-            "--file",
-            "README.md",
-            environment={"AGENT_CLAIM_TEST_FAIL_JOURNAL_WRITE": "1"},
-        )
-
-        self.assertEqual(0, completed.returncode, completed.stderr)
-        result = self.output(completed)
-        self.assertEqual("journal_write_failed", result["warnings"][0]["code"])
-        self.assertFalse(result["journal"]["persisted"])
-        registry = json.loads(self.registry_path().read_text(encoding="utf-8"))
-        self.assertEqual(["first"], [claim["claim_id"] for claim in registry["claims"]])
-        report = self.claim("report", "--since", "2d")
-        self.assertEqual(
-            [{"detail": "live claim has no acquisition event", "source": "first"}],
-            json.loads(report.stdout)["coverage_gaps"],
-        )
-
-    def test_released_claim_reconstructs_as_journal_lifecycle(self) -> None:
-        self.claim(*self.acquire_arguments("first"), "--file", "README.md")
-        self.claim("heartbeat", "--claim-id", "first")
-        (self.repository / "README.md").write_text("committed\n", encoding="utf-8")
-        self.git("add", "README.md")
-        self.git("commit", "-m", "change")
-        released = self.claim("release", "--claim-id", "first")
-
-        self.assertEqual(0, released.returncode, released.stderr)
-        events = self.journal_events()
-        self.assertTrue(all(event["schema_version"] == 1 for event in events))
-        self.assertEqual(["PRIMARY", "HEARTBEAT", "RELEASED"], [event["outcome"] for event in events])
-        self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), events[-1]["resulting_commit"])
-
-    def test_release_requires_clean_commit_or_explicit_no_change(self) -> None:
-        acquired = self.claim(*self.acquire_arguments("first"))
-        rejected = self.claim("release", "--claim-id", "first")
-        (self.repository / "README.md").write_text("committed\n", encoding="utf-8")
-        self.git("add", "README.md")
-        self.git("commit", "-m", "change")
-        released = self.claim("release", "--claim-id", "first")
-
-        self.assertEqual(0, acquired.returncode, acquired.stderr)
-        self.assertEqual(1, rejected.returncode)
-        self.assertEqual("RELEASE_REJECTED", self.output(rejected)["outcome"])
+        self.assertEqual("live_legacy_claims_require_drain", self.output(blocked)["reason"])
+        released = self.claim("release", "--claim-id", "legacy-live")
         self.assertEqual(0, released.returncode, released.stderr)
         self.assertEqual("RELEASED", self.output(released)["outcome"])
+        self.assertEqual([], json.loads(self.legacy_registry_path().read_text(encoding="utf-8"))["claims"])
 
-    def test_recovery_claim_preserves_dirty_baseline_until_checkpoint_commit(self) -> None:
-        (self.repository / "README.md").write_text("recovery\n", encoding="utf-8")
-        acquired = self.claim(*self.acquire_arguments("recovery"), "--allow-recovery")
-        rejected = self.claim("release", "--claim-id", "recovery")
-        self.git("add", "README.md")
-        self.git("commit", "-m", "recovery checkpoint")
-        released = self.claim("release", "--claim-id", "recovery")
+        migrated = self.claim(*self.acquire_arguments("new"), "--file", "src/one.py")
+        self.assertEqual(0, migrated.returncode, migrated.stderr)
+        self.assertTrue(self.legacy_registry_path().is_dir())
+        self.assertTrue(self.legacy_event_root().is_file())
 
-        self.assertEqual(0, acquired.returncode, acquired.stderr)
-        result = self.output(acquired)
-        self.assertEqual("DIRTY_CHECKOUT_RECOVERY_ACQUIRED", result["outcome"])
-        self.assertEqual("RECOVER", result["legacy_outcome"])
-        self.assertEqual(1, rejected.returncode)
-        self.assertEqual(0, released.returncode, released.stderr)
-
-    def test_isolated_worktrees_commit_without_global_commit_resource(self) -> None:
-        self.claim(*self.acquire_arguments("first"), "--file", "first.txt")
-        isolated, isolated_path = self.isolated_arguments("second")
-        self.claim(*self.acquire_arguments("second"), "--file", "second.txt", *isolated)
-        (self.repository / "first.txt").write_text("first\n", encoding="utf-8")
-        (isolated_path / "second.txt").write_text("second\n", encoding="utf-8")
-        self.git("add", "first.txt")
-        self.git("add", "second.txt", worktree=isolated_path)
-        processes = [
-            subprocess.Popen(
-                ["git", "-C", str(worktree), "commit", "-m", message],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            for worktree, message in ((self.repository, "first"), (isolated_path, "second"))
-        ]
-        completed = [process.communicate() + (process.returncode,) for process in processes]
-
-        self.assertTrue(all(code == 0 for _stdout, _stderr, code in completed), completed)
-
-    def test_integration_resources_conflict_per_target_branch(self) -> None:
-        main = self.claim(
-            *self.acquire_arguments("main"),
-            "--resource",
-            "merge:integration:main",
+    def test_work_item_lifecycle_and_report_preserve_current_fields(self) -> None:
+        acquired = self.claim(
+            *self.work_item_arguments("provider-update", "provider#17", "update"),
+            environment={"AGENT_CLAIM_TEST_NOW": "2026-08-05T10:00:00Z"},
         )
-        same_target = self.claim(
-            *self.acquire_arguments("same"),
-            "--resource",
-            "merge:integration:main",
+        status = self.claim("status")
+        released = self.claim(
+            "release",
+            "--claim-id",
+            "provider-update",
+            "--disposition",
+            "blocked",
+            "--blocker-reference",
+            "dependency-456",
+            environment={"AGENT_CLAIM_TEST_NOW": "2026-08-05T10:05:00Z"},
         )
-        isolated, _isolated_path = self.isolated_arguments("release")
-        other_target = self.claim(
-            *self.acquire_arguments("release"),
-            "--resource",
-            "merge:integration:release",
-            *isolated,
-        )
-
-        self.assertEqual(0, main.returncode, main.stderr)
-        self.assertEqual(3, same_target.returncode)
-        self.assertEqual(0, other_target.returncode, other_target.stderr)
-
-    def test_maintenance_keeps_two_hot_days_and_archives_older_days_losslessly(self) -> None:
-        for day in ("2026-07-10", "2026-07-11", "2026-07-12", "2026-07-13"):
-            event = self.synthetic_event(
-                f"event-{day}",
-                f"{day}T12:00:00Z",
-                "acquire",
-                "PRIMARY",
-                f"claim-{day}",
-            )
-            self.write_daily_events(day, [event])
-        environment = {"AGENT_CLAIM_TEST_NOW": "2026-07-13T15:00:00Z"}
-
-        maintained = self.claim("maintain-journal", "--hot-days", "2", environment=environment)
-        rerun = self.claim("maintain-journal", "--hot-days", "2", environment=environment)
-
-        self.assertEqual(0, maintained.returncode, maintained.stderr)
-        self.assertEqual(0, rerun.returncode, rerun.stderr)
-        self.assertEqual(
-            ["2026-07-12.jsonl", "2026-07-13.jsonl"],
-            sorted(path.name for path in self.hot_directory().glob("*.jsonl")),
-        )
-        archive_root = self.state_root() / "agent-claim-events" / "archive" / "2026" / "07"
-        summary_root = self.state_root() / "agent-claim-events" / "journal" / "2026" / "07"
-        for day in ("2026-07-10", "2026-07-11"):
-            archive = archive_root / f"{day}.jsonl.gz"
-            summary = summary_root / f"{day}.json"
-            events = [json.loads(line) for line in gzip.decompress(archive.read_bytes()).decode().splitlines()]
-            self.assertEqual([f"event-{day}"], [event["event_id"] for event in events])
-            self.assertEqual(1, json.loads(summary.read_text(encoding="utf-8"))["raw_event_count"])
-        self.assertEqual([], self.output(rerun)["archived"])
-
-    def test_archive_interruption_leaves_hot_file_for_safe_rerun(self) -> None:
-        event = self.synthetic_event("old", "2026-07-10T12:00:00Z", "acquire", "PRIMARY", "old")
-        hot = self.write_daily_events("2026-07-10", [event])
-        environment = {
-            "AGENT_CLAIM_TEST_NOW": "2026-07-13T15:00:00Z",
-            "AGENT_CLAIM_TEST_FAIL_ARCHIVE_BEFORE_VALIDATE": "1",
-        }
-
-        interrupted = self.claim("maintain-journal", environment=environment)
-
-        self.assertEqual(1, interrupted.returncode)
-        self.assertTrue(hot.exists())
-        archive = self.state_root() / "agent-claim-events" / "archive" / "2026" / "07" / "2026-07-10.jsonl.gz"
-        self.assertFalse(archive.exists())
-        completed = self.claim(
-            "maintain-journal",
-            environment={"AGENT_CLAIM_TEST_NOW": "2026-07-13T15:00:00Z"},
-        )
-        self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertFalse(hot.exists())
-
-    def test_archive_validation_failure_preserves_hot_source(self) -> None:
-        event = self.synthetic_event("old", "2026-07-10T12:00:00Z", "acquire", "PRIMARY", "old")
-        hot = self.write_daily_events("2026-07-10", [event])
-        archive = self.state_root() / "agent-claim-events" / "archive" / "2026" / "07" / "2026-07-10.jsonl.gz"
-        archive.parent.mkdir(parents=True)
-        archive.write_bytes(gzip.compress(b'{"different":"event"}\n'))
-
-        completed = self.claim(
-            "maintain-journal",
-            environment={"AGENT_CLAIM_TEST_NOW": "2026-07-13T15:00:00Z"},
-        )
-
-        self.assertEqual(1, completed.returncode)
-        self.assertEqual("JOURNAL_MAINTENANCE_FAILED", self.output(completed)["outcome"])
-        self.assertTrue(hot.exists())
-
-    def test_report_groups_waits_and_distinguishes_contention_kinds(self) -> None:
-        events = [
-            self.synthetic_event(
-                "wait-1",
-                "2026-07-12T10:00:00Z",
-                "acquire",
-                "WAIT",
-                "blocked",
-                overlaps=[
-                    {
-                        "scope_kind": "path",
-                        "requested_kind": "file",
-                        "requested": "src/one.py",
-                        "claimed_kind": "file",
-                        "claimed": "src/one.py",
-                    },
-                    {
-                        "scope_kind": "resource",
-                        "requested_kind": "resource",
-                        "requested": "port:3000",
-                        "claimed_kind": "resource",
-                        "claimed": "port:3000",
-                    },
-                ],
-                journal_warnings=[{"code": "prior_journal_warning"}],
-            ),
-            self.synthetic_event(
-                "wait-2",
-                "2026-07-12T10:02:00Z",
-                "acquire",
-                "WAIT",
-                "blocked",
-                overlaps=[
-                    {
-                        "scope_kind": "path",
-                        "requested_kind": "file",
-                        "requested": "src/one.py",
-                        "claimed_kind": "tree",
-                        "claimed": "src",
-                    }
-                ],
-            ),
-            self.synthetic_event(
-                "acquire",
-                "2026-07-12T10:05:00Z",
-                "acquire",
-                "PRIMARY",
-                "blocked",
-                requested_scopes={
-                    "files": [],
-                    "trees": ["src"],
-                    "all_files": False,
-                    "resources": ["merge:integration:main"],
-                    "scope_reason": "source migration",
-                },
-            ),
-            self.synthetic_event("release", "2026-07-12T10:06:00Z", "release", "RELEASED", "blocked"),
-            self.synthetic_event(
-                "isolate",
-                "2026-07-12T10:10:00Z",
-                "acquire",
-                "ISOLATE",
-                "isolated",
-                mode="isolated",
-            ),
-            self.synthetic_event(
-                "shared-required",
-                "2026-07-12T10:10:30Z",
-                "acquire",
-                "PRIMARY_REQUIRED",
-                "shared-required",
-                active_claim_count=1,
-                shared_checkout_claimed=False,
-            ),
-            self.synthetic_event("isolate-release", "2026-07-12T10:11:00Z", "release", "RELEASED", "isolated"),
-            self.synthetic_event("recover", "2026-07-12T10:20:00Z", "acquire", "RECOVER", "recovery"),
-            self.synthetic_event("recover-release", "2026-07-12T10:21:00Z", "release", "RELEASED", "recovery"),
-        ]
-        self.write_daily_events("2026-07-12", events)
-        environment = {"AGENT_CLAIM_TEST_NOW": "2026-07-13T10:00:00Z"}
-        registry_before = self.registry_path().read_bytes() if self.registry_path().exists() else None
-        journal_before = (self.hot_directory() / "2026-07-12.jsonl").read_bytes()
-
-        completed = self.claim("report", "--since", "2d", environment=environment)
-
-        self.assertEqual(0, completed.returncode, completed.stderr)
-        report = json.loads(completed.stdout)
-        self.assertEqual(2, report["schema_version"])
-        metrics = report["metrics"]
-        self.assertEqual(
-            {"primary": 1, "isolated": 1, "recovery": 1},
-            metrics["successful_acquisitions"],
-        )
-        self.assertEqual(2, metrics["wait_attempt_count"])
-        self.assertEqual(2, metrics["outcome_counts"]["CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED"])
-        self.assertEqual(2, metrics["raw_outcome_counts"]["WAIT"])
-        self.assertEqual(1, metrics["outcome_counts"]["SHARED_CHECKOUT_REQUIRED"])
-        self.assertEqual(1, metrics["raw_outcome_counts"]["PRIMARY_REQUIRED"])
-        self.assertEqual(1, len(metrics["wait_episodes"]))
-        self.assertEqual(300.0, metrics["wait_episodes"][0]["duration_seconds"])
-        self.assertEqual("src/one.py", metrics["top_contention"]["exact_files"][0]["scope"])
-        self.assertEqual("src/one.py", metrics["top_contention"]["trees"][0]["scope"])
-        self.assertEqual("port:3000", metrics["top_contention"]["resources"][0]["scope"])
-        self.assertEqual(60.0, metrics["claim_duration_seconds"]["median"])
-        self.assertEqual("source migration", metrics["broad_scopes"]["reasons"][0]["scope"])
-        self.assertEqual("merge:integration:main", metrics["integration_resources"][0]["scope"])
-        self.assertEqual(1, metrics["journal_warning_count"])
-        self.assertEqual(registry_before, self.registry_path().read_bytes() if self.registry_path().exists() else None)
-        self.assertEqual(journal_before, (self.hot_directory() / "2026-07-12.jsonl").read_bytes())
-
-    def test_report_keeps_ambiguous_legacy_primary_required_outcome_raw(self) -> None:
-        event = self.synthetic_event(
-            "ambiguous-primary-required",
-            "2026-07-12T10:00:00Z",
-            "acquire",
-            "PRIMARY_REQUIRED",
-            "ambiguous",
-            active_claim_count=1,
-        )
-        self.write_daily_events("2026-07-12", [event])
-
-        completed = self.claim(
+        report = self.claim(
             "report",
             "--since",
-            "2d",
-            environment={"AGENT_CLAIM_TEST_NOW": "2026-07-13T10:00:00Z"},
+            "1d",
+            environment={"AGENT_CLAIM_TEST_NOW": "2026-08-05T12:00:00Z"},
         )
 
-        self.assertEqual(0, completed.returncode, completed.stderr)
-        report = self.output(completed)
-        self.assertEqual(1, report["metrics"]["outcome_counts"]["PRIMARY_REQUIRED"])
-        self.assertEqual(
-            "legacy PRIMARY_REQUIRED lacks deterministic shared-checkout ownership evidence",
-            report["metrics"]["outcome_normalization_gaps"][0]["detail"],
+        self.assertEqual(0, acquired.returncode, acquired.stderr)
+        claim = self.output(status)["claims"][0]
+        self.assertEqual("provider#17", claim["work_item_id"])
+        self.assertEqual("update", claim["activity"])
+        self.assertEqual("SHARED_CHECKOUT_ACQUIRED", claim["acquisition_outcome"])
+        self.assertIn("incarnation_id", claim)
+        release_result = self.output(released)
+        self.assertEqual("blocked", release_result["disposition"])
+        self.assertEqual("dependency-456", release_result["blocker_reference"])
+        work_items = self.output(report)["work_items"]
+        self.assertEqual(1, work_items["schema_version"])
+        segment = work_items["items"][0]["segments"][0]
+        self.assertEqual("provider#17", work_items["items"][0]["work_item_id"])
+        self.assertEqual("blocked", segment["disposition"])
+        self.assertEqual("dependency-456", segment["blocker_reference"])
+        self.assertEqual(300.0, segment["duration_seconds"])
+
+    def test_invalid_work_item_release_preserves_registry_bytes(self) -> None:
+        acquired = self.claim(*self.work_item_arguments("item", "provider#18"))
+        self.assertEqual(0, acquired.returncode, acquired.stderr)
+        before = self.registry_path().read_bytes()
+
+        rejected = self.claim("release", "--claim-id", "item")
+
+        self.assertEqual(1, rejected.returncode)
+        result = self.output(rejected)
+        self.assertEqual("INVALID_WORK_ITEM_RELEASE", result["outcome"])
+        self.assertEqual("disposition_required", result["rejection"]["reason"])
+        self.assertEqual(before, self.registry_path().read_bytes())
+
+    def test_resource_deadline_extension_uses_configured_policy(self) -> None:
+        acquired = self.claim(
+            *self.acquire_arguments("browser"),
+            *self.timed_resource_arguments(),
+            environment={"AGENT_CLAIM_TEST_NOW": "2026-08-05T10:00:00Z"},
+        )
+        extended = self.claim(
+            "extend-deadline",
+            "--claim-id",
+            "browser",
+            "--requested-hard-stop-duration-seconds",
+            "900",
+            "--extension-evidence",
+            "one focused compatibility case remains",
+            environment={"AGENT_CLAIM_TEST_NOW": "2026-08-05T10:04:00Z"},
         )
 
-    def test_daily_boundaries_use_utc_not_local_daylight_saving(self) -> None:
-        event = self.synthetic_event("old", "2026-11-01T23:30:00Z", "acquire", "PRIMARY", "old")
-        old = self.write_daily_events("2026-11-01", [event])
-        current = self.write_daily_events(
-            "2026-11-03",
-            [self.synthetic_event("current", "2026-11-03T00:01:00Z", "heartbeat", "HEARTBEAT", "current")],
+        self.assertEqual(0, acquired.returncode, acquired.stderr)
+        deadline = self.output(acquired)["claim"]["deadline"]
+        self.assertEqual(3600, deadline["configured_maximum_duration_seconds"])
+        self.assertEqual("2026-08-05T10:10:00.000000Z", deadline["hard_stop_at"])
+        self.assertEqual(0, extended.returncode, extended.stderr)
+        result = self.output(extended)
+        self.assertEqual("DEADLINE_EXTENDED", result["outcome"])
+        self.assertEqual(900, result["claim"]["deadline"]["requested_hard_stop_duration_seconds"])
+        self.assertEqual("2026-08-05T10:15:00.000000Z", result["claim"]["deadline"]["hard_stop_at"])
+
+    def test_reset_replaces_malformed_registry_under_the_same_inode(self) -> None:
+        first = self.claim(*self.acquire_arguments("first"), "--file", "README.md")
+        self.assertEqual(0, first.returncode, first.stderr)
+        inode = self.registry_path().stat().st_ino
+        self.registry_path().write_text('{"claims":[', encoding="utf-8")
+
+        reset = self.claim("reset")
+
+        self.assertEqual(0, reset.returncode, reset.stderr)
+        self.assertEqual("RESET", self.output(reset)["outcome"])
+        self.assertEqual({"claims": []}, json.loads(self.registry_path().read_text(encoding="utf-8")))
+        self.assertEqual(inode, self.registry_path().stat().st_ino)
+
+    def test_report_reads_legacy_history_before_empty_migration(self) -> None:
+        self.legacy_registry_path().write_text('{"claims": []}\n', encoding="utf-8")
+        legacy_hot = self.legacy_event_root() / "hot"
+        legacy_hot.mkdir(parents=True)
+        event = {
+            "schema_version": 1,
+            "event_id": "legacy-history-event",
+            "timestamp": "2026-08-05T10:00:00.000000Z",
+            "action": "acquire",
+            "outcome": "PRIMARY",
+            "claim_id": "legacy-history",
+            "journal_warnings": [],
+        }
+        (legacy_hot / "2026-08-05.jsonl").write_text(
+            json.dumps(event, sort_keys=True) + "\n",
+            encoding="utf-8",
         )
 
-        completed = self.claim(
-            "maintain-journal",
-            "--hot-days",
-            "2",
-            environment={"AGENT_CLAIM_TEST_NOW": "2026-11-03T00:05:00Z", "TZ": "America/Toronto"},
+        report = self.claim(
+            "report",
+            "--since",
+            "1d",
+            environment={"AGENT_CLAIM_TEST_NOW": "2026-08-05T12:00:00Z"},
         )
 
-        self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertFalse(old.exists())
-        self.assertTrue(current.exists())
+        self.assertEqual(0, report.returncode, report.stderr)
+        result = self.output(report)
+        self.assertEqual(1, result["event_count"])
+        self.assertEqual(1, result["metrics"]["successful_acquisitions"]["primary"])
+        self.assertFalse(self.state_root().exists())
+        self.assertTrue(self.legacy_registry_path().is_file())
+        self.assertTrue(self.legacy_event_root().is_dir())
 
 
 if __name__ == "__main__":
