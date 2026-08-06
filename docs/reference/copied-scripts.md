@@ -2,7 +2,7 @@
 
 The first release deliberately copies accepted scripts from `dev-methodology` so the MCP project can expose simpler model-facing calls without reimplementing proven behavior.
 
-Current claim-engine, state-layout, and migration authority: `dev-methodology` commit `caefa261`.
+Current claim-engine, state-layout, and migration authority: `dev-methodology` commit `50850c6`.
 
 | New project file | Source file | Compatibility evidence |
 |---|---|---|
