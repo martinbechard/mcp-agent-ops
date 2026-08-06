@@ -56,6 +56,56 @@ def _initialize_repository(path: Path) -> None:
         )
 
 
+def _legacy_registry_payload(claim_id: str | None = None) -> bytes:
+    claims = []
+    if claim_id is not None:
+        claims.append({
+            "claim_id": claim_id,
+            "agent": "legacy-agent",
+            "root_task_id": "legacy-root",
+            "task": "legacy claim",
+            "files": ["README.md"],
+            "trees": [],
+            "resources": [],
+            "claimed_at": "2026-08-05T10:00:00Z",
+            "heartbeat": "2026-08-05T10:00:00Z",
+        })
+    return (json.dumps({"claims": claims}) + "\n").encode("utf-8")
+
+
+def _acquire_readme(repository: Path, claim_id: str = "owner") -> service.ClaimCommandResult:
+    return service.run_claim_command([
+        "--repo",
+        str(repository),
+        "acquire",
+        "--claim-id",
+        claim_id,
+        "--agent",
+        claim_id,
+        "--task",
+        claim_id,
+        "--root-task-id",
+        claim_id,
+        "--file",
+        "README.md",
+    ])
+
+
+def _prepare_interrupted_legacy_migration(repository: Path) -> Path:
+    state_root = repository / ".codex" / "agent-claim"
+    state_root.mkdir(parents=True)
+    (state_root / "agent-claims.json").write_bytes(_legacy_registry_payload())
+    (state_root / "state.json").write_bytes(
+        (json.dumps({
+            "schema_version": 1,
+            "state_layout_version": 2,
+            "migration_status": "in_progress",
+            "origin": "legacy",
+        }) + "\n").encode("utf-8")
+    )
+    return repository / ".git" / "agent-claims.json"
+
+
 def test_unrelated_repository_claim_calls_are_not_process_serialized(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -227,6 +277,139 @@ def test_migration_reads_registries_from_their_locked_descriptors(
     )
     assert marker["migration_status"] == "complete"
     assert marker["origin"] == expected_origin
+
+
+def test_windows_migration_writes_exact_tombstone_in_place_before_event_history(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repository = tmp_path / "repository"
+    _initialize_repository(repository)
+    legacy_registry = repository / ".git" / "agent-claims.json"
+    legacy_registry.write_bytes(_legacy_registry_payload())
+    original_inode = legacy_registry.stat().st_ino
+    legacy_events = repository / ".git" / "agent-claim-events"
+    legacy_events.mkdir()
+    (legacy_events / "events.jsonl").write_bytes(b"")
+    original_rename = os.rename
+    original_write = os.write
+    raw_writes: list[bytes] = []
+
+    def require_tombstone_before_events(
+        source: os.PathLike[str],
+        target: os.PathLike[str],
+    ) -> None:
+        if Path(source).resolve() == legacy_events.resolve():
+            assert legacy_registry.read_bytes() == engine._legacy_marker_payload("registry")
+        original_rename(source, target)
+
+    def record_raw_write(descriptor: int, payload: bytes) -> int:
+        raw_writes.append(bytes(payload))
+        return original_write(descriptor, payload)
+
+    monkeypatch.setattr(engine, "_windows_legacy_tombstone_required", lambda: True)
+    monkeypatch.setattr(engine.os, "rename", require_tombstone_before_events)
+    monkeypatch.setattr(engine.os, "write", record_raw_write)
+
+    result = _acquire_readme(repository)
+
+    assert result.exit_code == 0
+    assert legacy_registry.is_file()
+    assert legacy_registry.stat().st_ino == original_inode
+    assert legacy_registry.read_bytes() == engine._legacy_marker_payload("registry")
+    assert engine._legacy_marker_payload("registry") in raw_writes
+    assert legacy_events.is_file()
+
+
+def test_regular_file_tombstone_is_cross_platform_and_rejects_old_registry_parser(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    _initialize_repository(repository)
+    legacy_registry = _prepare_interrupted_legacy_migration(repository)
+    legacy_registry.write_bytes(engine._legacy_marker_payload("registry"))
+    legacy_events = repository / ".git" / "agent-claim-events"
+    legacy_events.write_bytes(engine._legacy_marker_payload("events"))
+    engine._write_state_marker(repository, "complete", "legacy")
+
+    status = service.run_claim_command(["--repo", str(repository), "status"])
+
+    assert status.exit_code == 0
+    assert status.result["outcome"] == "STATUS"
+    with pytest.raises(engine._ClaimStateError) as error:
+        engine._registry_payload(legacy_registry)
+    assert error.value.reason == "invalid_registry"
+
+
+def test_windows_migration_recovers_interrupted_empty_legacy_registry(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repository = tmp_path / "repository"
+    _initialize_repository(repository)
+    legacy_registry = _prepare_interrupted_legacy_migration(repository)
+    legacy_registry.write_bytes(_legacy_registry_payload())
+    original_inode = legacy_registry.stat().st_ino
+    legacy_events = repository / ".git" / "agent-claim-events"
+    legacy_events.mkdir()
+    monkeypatch.setattr(engine, "_windows_legacy_tombstone_required", lambda: True)
+
+    result = _acquire_readme(repository)
+
+    assert result.exit_code == 0
+    assert legacy_registry.stat().st_ino == original_inode
+    assert legacy_registry.read_bytes() == engine._legacy_marker_payload("registry")
+    assert legacy_events.is_file()
+    assert json.loads(
+        (repository / ".codex" / "agent-claim" / "state.json").read_text(
+            encoding="utf-8"
+        )
+    )["migration_status"] == "complete"
+
+
+def test_windows_interrupted_migration_preserves_live_legacy_claims_and_events(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repository = tmp_path / "repository"
+    _initialize_repository(repository)
+    legacy_registry = _prepare_interrupted_legacy_migration(repository)
+    live_payload = _legacy_registry_payload("still-live")
+    legacy_registry.write_bytes(live_payload)
+    original_inode = legacy_registry.stat().st_ino
+    legacy_events = repository / ".git" / "agent-claim-events"
+    legacy_events.mkdir()
+    monkeypatch.setattr(engine, "_windows_legacy_tombstone_required", lambda: True)
+
+    result = _acquire_readme(repository)
+
+    assert result.exit_code == 3
+    assert result.result["reason"] == "live_legacy_claims_require_drain"
+    assert legacy_registry.stat().st_ino == original_inode
+    assert legacy_registry.read_bytes() == live_payload
+    assert legacy_events.is_dir()
+    assert not (repository / ".codex" / "agent-claim" / "agent-claim-events").exists()
+
+
+def test_windows_migration_rejects_nonempty_legacy_metadata(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repository = tmp_path / "repository"
+    _initialize_repository(repository)
+    legacy_registry = repository / ".git" / "agent-claims.json"
+    legacy_payload = b'{"claims":[],"unexpected":"state"}\n'
+    legacy_registry.write_bytes(legacy_payload)
+    original_inode = legacy_registry.stat().st_ino
+    monkeypatch.setattr(engine, "_windows_legacy_tombstone_required", lambda: True)
+
+    result = _acquire_readme(repository)
+
+    assert result.exit_code == 3
+    assert result.result["reason"] == "contradictory_dual_state"
+    assert legacy_registry.stat().st_ino == original_inode
+    assert legacy_registry.read_bytes() == legacy_payload
+    assert not (repository / ".codex" / "agent-claim").exists()
 
 
 def test_stale_legacy_release_re_resolves_after_concurrent_drain_and_migration(

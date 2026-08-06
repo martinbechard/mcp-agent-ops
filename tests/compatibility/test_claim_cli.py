@@ -244,6 +244,24 @@ class AgentClaimTests(unittest.TestCase):
         """Return the pre-migration event-history path."""
         return self.repository / ".git" / "agent-claim-events"
 
+    def assert_legacy_registry_marker(self) -> None:
+        """Require the exact platform-specific incompatible registry marker."""
+        legacy_registry = self.legacy_registry_path()
+        if os.name == "nt":
+            self.assertTrue(legacy_registry.is_file())
+            marker_path = legacy_registry
+        else:
+            self.assertTrue(legacy_registry.is_dir())
+            marker_path = legacy_registry / "state.json"
+        self.assertEqual(
+            {
+                "schema_version": 1,
+                "state_layout_version": 2,
+                "migrated": "registry",
+            },
+            json.loads(marker_path.read_text(encoding="utf-8")),
+        )
+
     def hot_directory(self) -> Path:
         """Return the canonical hot-journal directory."""
         return self.state_root() / "agent-claim-events" / "hot"
@@ -378,17 +396,7 @@ class AgentClaimTests(unittest.TestCase):
             },
             json.loads(self.state_marker_path().read_text(encoding="utf-8")),
         )
-        self.assertTrue(self.legacy_registry_path().is_dir())
-        self.assertEqual(
-            {
-                "schema_version": 1,
-                "state_layout_version": 2,
-                "migrated": "registry",
-            },
-            json.loads(
-                (self.legacy_registry_path() / "state.json").read_text(encoding="utf-8")
-            ),
-        )
+        self.assert_legacy_registry_marker()
         self.assertTrue(self.legacy_event_root().is_file())
         self.assertEqual(
             {
@@ -526,7 +534,7 @@ class AgentClaimTests(unittest.TestCase):
 
         migrated = self.claim(*self.acquire_arguments("new"), "--file", "src/one.py")
         self.assertEqual(0, migrated.returncode, migrated.stderr)
-        self.assertTrue(self.legacy_registry_path().is_dir())
+        self.assert_legacy_registry_marker()
         self.assertTrue(self.legacy_event_root().is_file())
 
     @unittest.skipIf(
