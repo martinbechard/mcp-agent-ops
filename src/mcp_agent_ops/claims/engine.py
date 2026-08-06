@@ -25,6 +25,7 @@ from statistics import median
 from typing import Any, Iterator, Sequence, TextIO
 from uuid import uuid4
 
+import portalocker
 import yaml
 
 from mcp_agent_ops.claims.locking import exclusive_text_file
@@ -649,16 +650,48 @@ def _journal_paths(common_directory: Path) -> tuple[Path, Path, Path, Path]:
     return root, root / "hot", root / "archive", root / "journal"
 
 
+def _locked_file_matches_path(path: Path, locked_file: TextIO) -> bool:
+    try:
+        descriptor_status = os.fstat(locked_file.fileno())
+        path_status = path.stat(follow_symlinks=False)
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(descriptor_status.st_mode)
+        and stat.S_ISREG(path_status.st_mode)
+        and descriptor_status.st_dev == path_status.st_dev
+        and descriptor_status.st_ino == path_status.st_ino
+    )
+
+
+def _claim_path_handoff_occurred(path: Path) -> bool:
+    try:
+        return not path.is_file()
+    except OSError:
+        return True
+
+
 @contextmanager
 def _locked_registry_file(
     repository: Path,
     operation: str,
     claim_id: str | None = None,
 ) -> Iterator[tuple[Path, TextIO]]:
-    registry_path = _resolve_registry_path(repository, operation, claim_id)
-    registry_path.parent.mkdir(parents=True, exist_ok=True)
-    with exclusive_text_file(registry_path) as registry_file:
-        yield registry_path, registry_file
+    while True:
+        registry_path = _resolve_registry_path(repository, operation, claim_id)
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        verified_lock = False
+        try:
+            with exclusive_text_file(registry_path) as registry_file:
+                if not _locked_file_matches_path(registry_path, registry_file):
+                    continue
+                verified_lock = True
+                yield registry_path, registry_file
+                return
+        except (OSError, portalocker.LockException):
+            if not verified_lock and _claim_path_handoff_occurred(registry_path):
+                continue
+            raise
 
 
 @contextmanager
