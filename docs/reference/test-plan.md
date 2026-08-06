@@ -20,7 +20,7 @@
 - Journal warning behavior, two-day hot retention, lossless archival, and contention reporting.
 - Structured in-process dispatch with byte-compatible CLI output.
 - Concurrent calls against unrelated repositories without process-global serialization.
-- Primary and linked-worktree canonical state resolution, absent-state read-only behavior, exact layout-version-two markers, empty legacy-history migration, interrupted recovery, exact live-claim drain, concurrent release-to-marker handoff, platform-aware locked-file identity, first-lock mutating and read-only stale-inode rejection in threads and real processes, bounded operation-lock exhaustion, split-state refusal, and ignored operational scope.
+- Primary and linked-worktree canonical state resolution, absent-state read-only behavior, exact layout-version-two markers, locked-descriptor migration validation without pathname reopening, empty legacy-history migration, interrupted recovery, exact live-claim drain, concurrent release-to-marker handoff, platform-aware locked-file identity, first-lock mutating and read-only stale-inode rejection in threads and real processes, bounded operation-lock exhaustion, split-state refusal, and ignored operational scope.
 
 ## Contract tests
 

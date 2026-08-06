@@ -404,32 +404,29 @@ class AgentClaimTests(unittest.TestCase):
 
     def test_command_helper_marker_fixture_is_accepted_without_rewrite(self) -> None:
         self.state_root().mkdir(parents=True)
-        self.registry_path().write_text('{"claims": []}\n', encoding="utf-8")
-        self.state_marker_path().write_text(
-            json.dumps({
+        self.registry_path().write_bytes(b'{"claims": []}\n')
+        self.state_marker_path().write_bytes(
+            (json.dumps({
                 "schema_version": 1,
                 "state_layout_version": 2,
                 "migration_status": "complete",
                 "origin": "legacy",
-            }) + "\n",
-            encoding="utf-8",
+            }) + "\n").encode("utf-8"),
         )
         self.legacy_registry_path().mkdir()
-        (self.legacy_registry_path() / "state.json").write_text(
-            json.dumps({
+        (self.legacy_registry_path() / "state.json").write_bytes(
+            (json.dumps({
                 "schema_version": 1,
                 "state_layout_version": 2,
                 "migrated": "registry",
-            }, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
+            }, indent=2, sort_keys=True) + "\n").encode("utf-8"),
         )
-        self.legacy_event_root().write_text(
-            json.dumps({
+        self.legacy_event_root().write_bytes(
+            (json.dumps({
                 "schema_version": 1,
                 "state_layout_version": 2,
                 "migrated": "events",
-            }, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
+            }, indent=2, sort_keys=True) + "\n").encode("utf-8"),
         )
         before = {
             path: path.read_bytes()

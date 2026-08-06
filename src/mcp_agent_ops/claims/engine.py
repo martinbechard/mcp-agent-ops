@@ -207,9 +207,17 @@ def _state_marker_path(repository: Path) -> Path:
     return _state_root(repository) / STATE_MARKER_FILE_NAME
 
 
-def _registry_payload(path: Path) -> dict[str, Any]:
+def _registry_payload(
+    path: Path,
+    *,
+    locked_file: TextIO | None = None,
+) -> dict[str, Any]:
     try:
-        raw = path.read_text(encoding="utf-8")
+        if locked_file is None:
+            raw = path.read_text(encoding="utf-8")
+        else:
+            locked_file.seek(0)
+            raw = locked_file.read()
         data = json.loads(raw) if raw else {"claims": []}
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise _ClaimStateError(
@@ -326,18 +334,18 @@ def _install_legacy_events_marker(path: Path) -> None:
 
 
 @contextmanager
-def _migration_lock(repository: Path) -> Iterator[None]:
+def _migration_lock(repository: Path) -> Iterator[TextIO]:
     registry_path = _registry_path(repository)
     if not registry_path.exists():
         try:
             _create_empty_registry(registry_path)
         except FileExistsError:
             pass
-    with exclusive_text_file(registry_path):
-        yield
+    with exclusive_text_file(registry_path) as registry_file:
+        yield registry_file
 
 
-def _finish_legacy_migration(repository: Path) -> None:
+def _finish_legacy_migration(repository: Path, registry_file: TextIO) -> None:
     state_root = _state_root(repository)
     registry_path = state_root / REGISTRY_FILE_NAME
     events_path = state_root / EVENT_DIRECTORY_NAME
@@ -347,7 +355,7 @@ def _finish_legacy_migration(repository: Path) -> None:
 
     if not registry_path.exists():
         _create_empty_registry(registry_path)
-    if _registry_payload(registry_path)["claims"]:
+    if _registry_payload(registry_path, locked_file=registry_file)["claims"]:
         raise _ClaimStateError(
             "contradictory_dual_state",
             "Interrupted migration found live canonical claims before the legacy boundary completed.",
@@ -430,8 +438,8 @@ def _resolve_registry_path_once(
 
     if marker and marker["migration_status"] == "in_progress":
         try:
-            with _migration_lock(repository):
-                _finish_legacy_migration(repository)
+            with _migration_lock(repository) as registry_file:
+                _finish_legacy_migration(repository, registry_file)
         except _ClaimStateError:
             raise
         except OSError as error:
@@ -499,8 +507,8 @@ def _resolve_registry_path_once(
                 _state_root(repository).mkdir(parents=True, exist_ok=True)
                 _write_state_marker(repository, "in_progress", "legacy")
                 try:
-                    with _migration_lock(repository):
-                        _finish_legacy_migration(repository)
+                    with _migration_lock(repository) as registry_file:
+                        _finish_legacy_migration(repository, registry_file)
                 except _ClaimStateError:
                     raise
                 except OSError as error:
@@ -516,7 +524,7 @@ def _resolve_registry_path_once(
                 return None
             raise
 
-    with _migration_lock(repository):
+    with _migration_lock(repository) as registry_file:
         current_marker = _state_marker(repository)
         if current_marker is not None:
             if current_marker["migration_status"] != "complete":
@@ -527,7 +535,7 @@ def _resolve_registry_path_once(
                     legacy_registry=str(legacy_registry),
                 )
             return registry_path
-        _registry_payload(registry_path)
+        _registry_payload(registry_path, locked_file=registry_file)
         _write_state_marker(repository, "complete", "fresh")
     return registry_path
 

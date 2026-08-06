@@ -9,11 +9,13 @@ import json
 import os
 import stat
 import subprocess
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Barrier, Event, Thread, current_thread
 from types import SimpleNamespace
+from typing import TextIO
 
 import pytest
 from pytest import MonkeyPatch
@@ -162,6 +164,72 @@ def test_resource_claim_requires_complete_deadline_evidence(tmp_path: Path) -> N
     assert result.result["outcome"] == "INVALID_DEADLINE_POLICY"
     assert result.result["rejection"]["reason"] == "resource_timing_required"
     assert not (repository / ".worktrees" / "resource").exists()
+
+
+@pytest.mark.parametrize(
+    ("legacy_state", "expected_origin"),
+    [(False, "fresh"), (True, "legacy")],
+    ids=["fresh", "legacy"],
+)
+def test_migration_reads_canonical_registry_from_its_locked_descriptor(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    legacy_state: bool,
+    expected_origin: str,
+) -> None:
+    repository = tmp_path / "repository"
+    _initialize_repository(repository)
+    if legacy_state:
+        (repository / ".git" / "agent-claims.json").write_bytes(b'{"claims": []}\n')
+
+    canonical_registry = (
+        repository / ".codex" / "agent-claim" / "agent-claims.json"
+    ).resolve()
+    locked_paths: set[Path] = set()
+    original_exclusive_text_file = engine.exclusive_text_file
+    original_read_text = Path.read_text
+
+    @contextmanager
+    def track_locked_path(path: Path, *, create: bool = True) -> Iterator[TextIO]:
+        with original_exclusive_text_file(path, create=create) as locked_file:
+            locked_paths.add(path.resolve())
+            try:
+                yield locked_file
+            finally:
+                locked_paths.remove(path.resolve())
+
+    def reject_locked_canonical_reopen(path: Path, *args: object, **kwargs: object) -> str:
+        if path.resolve() == canonical_registry and canonical_registry in locked_paths:
+            raise PermissionError("simulated Windows locked-file reopen rejection")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(engine, "exclusive_text_file", track_locked_path)
+    monkeypatch.setattr(Path, "read_text", reject_locked_canonical_reopen)
+
+    result = service.run_claim_command([
+        "--repo",
+        str(repository),
+        "acquire",
+        "--claim-id",
+        "owner",
+        "--agent",
+        "owner",
+        "--task",
+        "owner",
+        "--root-task-id",
+        "owner",
+        "--file",
+        "README.md",
+    ])
+
+    assert result.exit_code == 0
+    marker = json.loads(
+        (repository / ".codex" / "agent-claim" / "state.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert marker["migration_status"] == "complete"
+    assert marker["origin"] == expected_origin
 
 
 def test_stale_legacy_release_re_resolves_after_concurrent_drain_and_migration(
