@@ -143,7 +143,7 @@ class AgentClaimTests(unittest.TestCase):
         command_environment = os.environ.copy()
         command_environment["PYTHONDONTWRITEBYTECODE"] = "1"
         command_environment.update(environment or {})
-        return subprocess.run(
+        completed = subprocess.run(
             [
                 sys.executable,
                 "-m",
@@ -157,6 +157,9 @@ class AgentClaimTests(unittest.TestCase):
             capture_output=True,
             env=command_environment,
         )
+        if completed.returncode == 3:
+            print(f"claim coordination result: {completed.stdout}")
+        return completed
 
     def authority_claim(self, *arguments: str) -> subprocess.CompletedProcess[str]:
         """Run the explicitly configured source-authority helper for cross-implementation checks."""
