@@ -721,12 +721,12 @@ def _locked_registry_file(
     operation: str,
     claim_id: str | None = None,
 ) -> Iterator[tuple[Path, TextIO]]:
-    while True:
+    for _attempt in range(REGISTRY_LOCK_RETRY_LIMIT):
         registry_path = _resolve_registry_path(repository, operation, claim_id)
         registry_path.parent.mkdir(parents=True, exist_ok=True)
         verified_lock = False
         try:
-            with exclusive_text_file(registry_path) as registry_file:
+            with exclusive_text_file(registry_path, create=False) as registry_file:
                 if not _locked_file_matches_path(registry_path, registry_file):
                     continue
                 verified_lock = True
@@ -736,6 +736,12 @@ def _locked_registry_file(
             if not verified_lock and _claim_path_handoff_occurred(registry_path):
                 continue
             raise
+    raise _ClaimStateError(
+        "registry_lock_race",
+        "Claim registry storage kept changing while its operational lock was acquired.",
+        operation=operation,
+        claim_id=claim_id,
+    )
 
 
 @contextmanager

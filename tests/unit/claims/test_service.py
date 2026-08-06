@@ -520,3 +520,115 @@ def test_repeated_legacy_lock_handoffs_fail_closed_after_bounded_retries(
     assert result.result["registry_unchanged"] is True
     assert legacy_registry.read_bytes() == before
     assert not (repository / ".codex" / "agent-claim").exists()
+
+
+def test_repeated_operation_lock_handoffs_fail_closed_after_bounded_retries(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repository = tmp_path / "repository"
+    _initialize_repository(repository)
+    acquired = service.run_claim_command([
+        "--repo",
+        str(repository),
+        "acquire",
+        "--claim-id",
+        "canonical-owner",
+        "--agent",
+        "canonical-owner",
+        "--task",
+        "canonical owner",
+        "--root-task-id",
+        "canonical-owner",
+        "--file",
+        "README.md",
+    ])
+    registry = repository / ".codex" / "agent-claim" / "agent-claims.json"
+    before = registry.read_bytes()
+    identity_checks = 0
+    handler_calls = 0
+    original_release = engine._release
+
+    def reject_locked_inode(_path: Path, _locked_file: object) -> bool:
+        nonlocal identity_checks
+        identity_checks += 1
+        if identity_checks > engine.REGISTRY_LOCK_RETRY_LIMIT:
+            raise AssertionError("operation-lock identity retries were unbounded")
+        return False
+
+    def count_release_handler(arguments: argparse.Namespace) -> int:
+        nonlocal handler_calls
+        handler_calls += 1
+        return original_release(arguments)
+
+    monkeypatch.setattr(engine, "_locked_file_matches_path", reject_locked_inode)
+    monkeypatch.setattr(engine, "_release", count_release_handler)
+    result = service.run_claim_command([
+        "--repo",
+        str(repository),
+        "release",
+        "--claim-id",
+        "canonical-owner",
+    ])
+
+    assert acquired.result["outcome"] == "SHARED_CHECKOUT_ACQUIRED"
+    assert identity_checks == engine.REGISTRY_LOCK_RETRY_LIMIT
+    assert handler_calls == 1
+    assert result.exit_code == 3
+    assert result.result["outcome"] == "CLAIM_STATE_MIGRATION_BLOCKED"
+    assert result.result["reason"] == "registry_lock_race"
+    assert result.result["operation"] == "release"
+    assert result.result["claim_id"] == "canonical-owner"
+    assert result.result["registry_unchanged"] is True
+    assert registry.read_bytes() == before
+
+
+def test_operation_lock_does_not_retry_after_handler_failure(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repository = tmp_path / "repository"
+    _initialize_repository(repository)
+    acquired = service.run_claim_command([
+        "--repo",
+        str(repository),
+        "acquire",
+        "--claim-id",
+        "canonical-owner",
+        "--agent",
+        "canonical-owner",
+        "--task",
+        "canonical owner",
+        "--root-task-id",
+        "canonical-owner",
+        "--file",
+        "README.md",
+    ])
+    registry = repository / ".codex" / "agent-claim" / "agent-claims.json"
+    before = registry.read_bytes()
+    identity_checks = 0
+    original_identity_check = engine._locked_file_matches_path
+
+    def count_identity_check(path: Path, locked_file: object) -> bool:
+        nonlocal identity_checks
+        identity_checks += 1
+        return original_identity_check(path, locked_file)
+
+    def reject_registry_write(_registry_file: object, _data: dict[str, object]) -> None:
+        raise OSError("simulated post-yield registry write failure")
+
+    monkeypatch.setattr(engine, "_locked_file_matches_path", count_identity_check)
+    monkeypatch.setattr(engine, "_write_registry", reject_registry_write)
+
+    with pytest.raises(OSError, match="simulated post-yield registry write failure"):
+        service.run_claim_command([
+            "--repo",
+            str(repository),
+            "release",
+            "--claim-id",
+            "canonical-owner",
+        ])
+
+    assert acquired.result["outcome"] == "SHARED_CHECKOUT_ACQUIRED"
+    assert identity_checks == 1
+    assert registry.read_bytes() == before
