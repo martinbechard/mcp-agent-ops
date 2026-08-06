@@ -171,7 +171,7 @@ def test_resource_claim_requires_complete_deadline_evidence(tmp_path: Path) -> N
     [(False, "fresh"), (True, "legacy")],
     ids=["fresh", "legacy"],
 )
-def test_migration_reads_canonical_registry_from_its_locked_descriptor(
+def test_migration_reads_registries_from_their_locked_descriptors(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
     legacy_state: bool,
@@ -182,9 +182,6 @@ def test_migration_reads_canonical_registry_from_its_locked_descriptor(
     if legacy_state:
         (repository / ".git" / "agent-claims.json").write_bytes(b'{"claims": []}\n')
 
-    canonical_registry = (
-        repository / ".codex" / "agent-claim" / "agent-claims.json"
-    ).resolve()
     locked_paths: set[Path] = set()
     original_exclusive_text_file = engine.exclusive_text_file
     original_read_text = Path.read_text
@@ -198,13 +195,13 @@ def test_migration_reads_canonical_registry_from_its_locked_descriptor(
             finally:
                 locked_paths.remove(path.resolve())
 
-    def reject_locked_canonical_reopen(path: Path, *args: object, **kwargs: object) -> str:
-        if path.resolve() == canonical_registry and canonical_registry in locked_paths:
+    def reject_locked_reopen(path: Path, *args: object, **kwargs: object) -> str:
+        if path.resolve() in locked_paths:
             raise PermissionError("simulated Windows locked-file reopen rejection")
         return original_read_text(path, *args, **kwargs)
 
     monkeypatch.setattr(engine, "exclusive_text_file", track_locked_path)
-    monkeypatch.setattr(Path, "read_text", reject_locked_canonical_reopen)
+    monkeypatch.setattr(Path, "read_text", reject_locked_reopen)
 
     result = service.run_claim_command([
         "--repo",

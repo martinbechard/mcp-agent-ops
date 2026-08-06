@@ -345,7 +345,12 @@ def _migration_lock(repository: Path) -> Iterator[TextIO]:
         yield registry_file
 
 
-def _finish_legacy_migration(repository: Path, registry_file: TextIO) -> None:
+def _finish_legacy_migration(
+    repository: Path,
+    registry_file: TextIO,
+    *,
+    legacy_data: dict[str, Any] | None = None,
+) -> None:
     state_root = _state_root(repository)
     registry_path = state_root / REGISTRY_FILE_NAME
     events_path = state_root / EVENT_DIRECTORY_NAME
@@ -383,7 +388,8 @@ def _finish_legacy_migration(repository: Path, registry_file: TextIO) -> None:
     if _legacy_registry_is_marker(legacy_registry):
         pass
     elif legacy_registry.exists():
-        legacy_data = _registry_payload(legacy_registry)
+        if legacy_data is None:
+            legacy_data = _registry_payload(legacy_registry)
         if legacy_data["claims"]:
             raise _ClaimStateError(
                 "live_legacy_claims_require_drain",
@@ -508,7 +514,11 @@ def _resolve_registry_path_once(
                 _write_state_marker(repository, "in_progress", "legacy")
                 try:
                     with _migration_lock(repository) as registry_file:
-                        _finish_legacy_migration(repository, registry_file)
+                        _finish_legacy_migration(
+                            repository,
+                            registry_file,
+                            legacy_data=data,
+                        )
                 except _ClaimStateError:
                     raise
                 except OSError as error:
