@@ -157,9 +157,9 @@ See the [complete hierarchical HTML renderer reference](docs/reference/hierarchy
 for inputs, parameters, numbering, transient checkboxes, progressive level controls, themes,
 output behavior, validation, errors, regeneration guidance, and implementation links.
 
-A runnable [hierarchy gallery](examples/hierarchy-gallery/README.md) demonstrates YAML filename,
-full JSON content, and in-memory Python inputs with the two packaged themes and a custom dark
-theme. Generate its live previews from the repository root:
+A runnable [hierarchy gallery](examples/hierarchy-gallery/README.md) includes structured examples
+and a reviewable Markdown document outline. The examples use the packaged `default`, `outline`, and
+`midnight` themes. Generate the live previews from the repository root:
 
 ```bash
 uv run python examples/hierarchy-gallery/generate_gallery.py

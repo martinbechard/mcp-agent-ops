@@ -28,6 +28,11 @@ def test_gallery_generator_builds_index_and_interactive_examples(tmp_path: Path)
         "delivery-plan.html": ("Delivery Plan", "default", "Release the customer portal refresh"),
         "incident-review.html": ("Incident Review", "outline", "A retry policy amplified"),
         "agent-workflow.html": ("Agent Workflow", "midnight", "bounded execution scope"),
+        "document-outline.html": (
+            "Document Outline",
+            "midnight",
+            "Define the capabilities that the document covers.",
+        ),
     }
     for filename, (title, theme, example_value) in pages.items():
         content = (tmp_path / filename).read_text(encoding="utf-8")
@@ -39,11 +44,12 @@ def test_gallery_generator_builds_index_and_interactive_examples(tmp_path: Path)
         assert "Expand all" in content
 
     index = (tmp_path / "index.html").read_text(encoding="utf-8")
-    assert index.count("<iframe") == 3
+    assert index.count("<iframe") == 4
     assert 'src="delivery-plan.html"' in index
     assert 'src="incident-review.html"' in index
     assert 'src="agent-workflow.html"' in index
-    assert index.count('sandbox="allow-scripts"') == 3
+    assert 'src="document-outline.html"' in index
+    assert index.count('sandbox="allow-scripts"') == 4
 
     delivery_plan = (tmp_path / "delivery-plan.html").read_text(encoding="utf-8")
     assert '<span class="tree-number">1.5.1</span>' in delivery_plan
@@ -54,3 +60,9 @@ def test_gallery_generator_builds_index_and_interactive_examples(tmp_path: Path)
     assert 'data-level="3"' in delivery_plan
     assert 'data-level="all"' in delivery_plan
     assert "[0]" not in delivery_plan
+
+    document_outline = (tmp_path / "document-outline.html").read_text(encoding="utf-8")
+    assert '<span class="tree-number">1.2.1</span>' in document_outline
+    assert "Product Requirements Document" in document_outline
+    assert 'class="tree-checkbox"' not in document_outline
+    assert "[0]" not in document_outline

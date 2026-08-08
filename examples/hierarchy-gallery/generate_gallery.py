@@ -1,19 +1,21 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Builds a browsable gallery of hierarchical HTML renderer input and theme modes.
+# Summary: Builds a browsable gallery from structured data and a reviewable Markdown document outline.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from html import escape
 from pathlib import Path
 
 from mcp_agent_ops.hierarchy import render_hierarchy_html
 
 _GALLERY_ROOT = Path(__file__).resolve().parent
+_MARKDOWN_HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)\s*$")
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,65 @@ class _Demo:
     themes_folder: Path | None = None
     numbering: bool = False
     checkboxes: bool = False
+
+
+@dataclass
+class _OutlineNode:
+    title: str
+    level: int
+    body: list[str] = field(default_factory=list)
+    children: list[_OutlineNode] = field(default_factory=list)
+
+
+def _outline_value(node: _OutlineNode) -> object:
+    if node.children:
+        if node.body:
+            raise ValueError(f"Markdown outline branch '{node.title}' must not contain body text.")
+        result: dict[str, object] = {}
+        for child in node.children:
+            if child.title in result:
+                raise ValueError(f"Markdown outline contains duplicate sibling heading '{child.title}'.")
+            result[child.title] = _outline_value(child)
+        return result
+    body = " ".join(node.body).strip()
+    if not body:
+        raise ValueError(f"Markdown outline leaf '{node.title}' must contain review text.")
+    return body
+
+
+def _load_markdown_outline(path: Path) -> dict[str, object]:
+    roots: list[_OutlineNode] = []
+    stack: list[_OutlineNode] = []
+    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        heading = _MARKDOWN_HEADING.fullmatch(line)
+        if heading is None:
+            if not stack:
+                raise ValueError(f"Markdown outline body appears before its first heading at line {line_number}.")
+            stack[-1].body.append(line)
+            continue
+
+        level = len(heading.group(1))
+        if not stack and level != 1:
+            raise ValueError("Markdown outline must begin with one level-one heading.")
+        if stack and level > stack[-1].level + 1:
+            raise ValueError(f"Markdown outline skips a heading level at line {line_number}.")
+        while stack and stack[-1].level >= level:
+            stack.pop()
+
+        node = _OutlineNode(title=heading.group(2), level=level)
+        if stack:
+            stack[-1].children.append(node)
+        else:
+            roots.append(node)
+        stack.append(node)
+
+    if len(roots) != 1:
+        raise ValueError("Markdown outline must contain exactly one level-one heading.")
+    root = roots[0]
+    return {root.title: _outline_value(root)}
 
 
 def _demos() -> list[_Demo]:
@@ -60,6 +121,17 @@ def _demos() -> list[_Demo]:
             checkboxes=True,
         ),
         _Demo(
+            slug="document-outline",
+            title="Document Outline",
+            description=(
+                "Reviewable Markdown headings rendered with numbering, no checkboxes, "
+                "and the packaged midnight theme."
+            ),
+            source=_load_markdown_outline(_GALLERY_ROOT / "data" / "document-outline.md"),
+            theme="midnight",
+            numbering=True,
+        ),
+        _Demo(
             slug="incident-review",
             title="Incident Review",
             description="Full JSON content with the packaged outline theme.",
@@ -69,10 +141,9 @@ def _demos() -> list[_Demo]:
         _Demo(
             slug="agent-workflow",
             title="Agent Workflow",
-            description="In-memory Python data with a caller-supplied midnight theme.",
+            description="In-memory Python data with the packaged midnight theme.",
             source=agent_workflow,
             theme="midnight",
-            themes_folder=_GALLERY_ROOT / "themes",
         ),
     ]
 
@@ -130,7 +201,8 @@ def _gallery_index(demos: list[_Demo]) -> str:
     <header>
       <p class="eyebrow">Renderer examples</p>
       <h1>Hierarchical HTML Gallery</h1>
-      <p>Three interactive examples show file, full-content, and in-memory inputs with packaged and custom themes.</p>
+      <p>{len(demos)} interactive examples show structured inputs, a Markdown document outline,
+        and three packaged themes.</p>
     </header>
     <section class="gallery" aria-label="Interactive hierarchy examples">
 {cards}
@@ -172,8 +244,8 @@ def main() -> int:
         ValueError: If a checked-in example or theme violates the renderer contract.
 
     Side effects:
-        Parses command-line arguments, creates the selected output folder, writes four
-        HTML files, and prints the resolved gallery index path.
+        Parses command-line arguments, creates the selected output folder, writes the index
+        and four example HTML files, and prints the resolved gallery index path.
     """
     parser = argparse.ArgumentParser(description="Build the hierarchical HTML renderer gallery.")
     parser.add_argument(

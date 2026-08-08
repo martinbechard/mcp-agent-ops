@@ -81,7 +81,7 @@ render_hierarchy_html(
 | --- | --- | --- |
 | `source` | Mapping, non-string sequence, JSON/YAML text, existing filename string, or `Path` | Supplies the hierarchy. The root must be a mapping or sequence. |
 | `title` | `str` | Sets both the browser title and visible page heading. It is HTML-escaped. Default: `Hierarchy`. |
-| `theme` | Simple base name | Selects `<theme>.css`. Packaged choices are `default` and `outline`. Default: `default`. |
+| `theme` | Simple base name | Selects `<theme>.css`. Packaged choices are `default`, `outline`, and `midnight`. Default: `default`. |
 | `themes_folder` | `str`, `Path`, or `None` | Selects a caller-owned theme folder. Packaged themes are used when omitted. |
 | `numbering` | `bool` | Adds one-based dotted numbers such as `1`, `1.2`, and `1.2.1`. Default: `False`. |
 | `checkboxes` | `bool` | Adds an initially unchecked tracking checkbox to every node. Default: `False`. |
@@ -216,10 +216,17 @@ regenerate the HTML. Do not treat browser checkbox state as authoritative progre
 Packaged themes are:
 
 - `default`: a neutral blue light theme;
-- `outline`: a higher-contrast violet light theme.
+- `outline`: a higher-contrast violet light theme;
+- `midnight`: a dark navy theme with blue, green, amber, and violet syntax colors.
 
-Both are combined with the packaged responsive base CSS. To use a custom theme, create a CSS file
-whose filename matches the `theme` base name:
+Select a packaged theme by base name. No theme folder is required:
+
+```python
+render_hierarchy_html(plan, theme="midnight")
+```
+
+Each theme is combined with the packaged responsive base CSS. To use a custom theme, create a CSS
+file whose filename matches the `theme` base name:
 
 ```text
 themes/
@@ -233,6 +240,10 @@ render_hierarchy_html(
     themes_folder="themes",
 )
 ```
+
+Caller-supplied means that the caller supplies this CSS file and identifies its folder through
+`themes_folder`. The function does not accept raw CSS content as a parameter. It always reads the
+selected `<theme>.css` file and combines it with the packaged base styles.
 
 A complete custom theme should define these variables:
 
@@ -298,8 +309,10 @@ work.
 The checked-in [hierarchy gallery](../../examples/hierarchy-gallery/README.md) demonstrates:
 
 - a YAML filename with dotted numbering and tracking checkboxes;
+- a reviewable [Markdown document outline](../../examples/hierarchy-gallery/data/document-outline.md)
+  converted to structured data by the gallery generator;
 - full JSON content with the packaged `outline` theme;
-- in-memory Python data with a caller-owned theme.
+- in-memory Python data with the packaged `midnight` theme.
 
 Generate it from the repository root:
 
@@ -307,7 +320,7 @@ Generate it from the repository root:
 uv run python examples/hierarchy-gallery/generate_gallery.py
 ```
 
-The command writes `index.html` and three self-contained examples beneath
+The command writes `index.html` and four self-contained examples beneath
 `examples/hierarchy-gallery/build/`. Generated gallery output is ignored by Git and can be rebuilt
 from the checked-in inputs and generator.
 
@@ -322,6 +335,7 @@ src/
         └── themes/
             ├── base.css                # Shared responsive and interaction styles
             ├── default.css             # Packaged neutral theme
+            ├── midnight.css            # Packaged dark theme
             └── outline.css             # Packaged outline theme
 tests/
 ├── unit/

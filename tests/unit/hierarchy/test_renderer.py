@@ -114,6 +114,7 @@ def test_saves_self_contained_html_and_returns_the_resolved_output_path(tmp_path
 
 def test_loads_builtin_and_caller_supplied_theme_files(tmp_path: Path) -> None:
     outlined = render_hierarchy_html({"plan": ["Review"]}, theme="outline")
+    midnight = render_hierarchy_html({"plan": ["Review"]}, theme="midnight")
     themes = tmp_path / "themes"
     themes.mkdir()
     (themes / "solarized.css").write_text(":root { --accent: #b58900; }\n", encoding="utf-8")
@@ -125,6 +126,8 @@ def test_loads_builtin_and_caller_supplied_theme_files(tmp_path: Path) -> None:
 
     assert 'data-theme="outline"' in outlined
     assert "--accent: #8250df" in outlined
+    assert 'data-theme="midnight"' in midnight
+    assert "--background: #080d18" in midnight
     assert 'data-theme="solarized"' in custom
     assert "--accent: #b58900" in custom
 
