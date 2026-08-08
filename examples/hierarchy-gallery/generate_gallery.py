@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Builds a browsable gallery from structured data and a reviewable Markdown document outline.
+# Summary: Builds a browsable hierarchy gallery with theme variants and presentation callouts.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
@@ -15,6 +15,7 @@ from pathlib import Path
 from mcp_agent_ops.hierarchy import render_hierarchy_html
 
 _GALLERY_ROOT = Path(__file__).resolve().parent
+_REPOSITORY_ROOT = _GALLERY_ROOT.parents[1]
 _MARKDOWN_HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)\s*$")
 
 
@@ -141,11 +142,24 @@ def _demos() -> list[_Demo]:
         _Demo(
             slug="agent-workflow",
             title="Agent Workflow",
-            description="In-memory Python data with the packaged midnight theme.",
+            description="In-memory Python data with a caller-supplied blueprint theme.",
             source=agent_workflow,
-            theme="midnight",
+            theme="blueprint",
+            themes_folder=_GALLERY_ROOT / "themes",
         ),
     ]
+
+
+def _presentation_parameters(demo: _Demo) -> str:
+    parameters = [f'theme="{demo.theme}"']
+    if demo.themes_folder is not None:
+        try:
+            theme_folder = demo.themes_folder.relative_to(_REPOSITORY_ROOT).as_posix()
+        except ValueError:
+            theme_folder = demo.themes_folder.as_posix()
+        parameters.append(f'themes_folder="{theme_folder}"')
+    parameters.extend((f"numbering={demo.numbering}", f"checkboxes={demo.checkboxes}"))
+    return "\n".join(parameters)
 
 
 def _gallery_index(demos: list[_Demo]) -> str:
@@ -155,6 +169,10 @@ def _gallery_index(demos: list[_Demo]) -> str:
           <p class="eyebrow">{escape(demo.theme)} theme</p>
           <h2>{escape(demo.title)}</h2>
           <p>{escape(demo.description)}</p>
+          <aside class="style-callout" aria-label="Presentation parameters">
+            <p>Presentation parameters</p>
+            <pre><code>{escape(_presentation_parameters(demo))}</code></pre>
+          </aside>
           <a href="{escape(demo.slug, quote=True)}.html">Open full page</a>
         </div>
         <iframe
@@ -189,6 +207,12 @@ def _gallery_index(demos: list[_Demo]) -> str:
     .card-copy a {{ display: inline-block; margin-top: 0.8rem; color: #255ab5; font-weight: 700; }}
     .eyebrow {{ color: #7c3aed !important; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
       font-size: 0.72rem; font-weight: 800; letter-spacing: 0.09em; text-transform: uppercase; }}
+    .style-callout {{ margin-top: 1rem; padding: 0.8rem 0.9rem; border-left: 3px solid #7c3aed;
+      border-radius: 0 10px 10px 0; background: #f5f3ff; }}
+    .style-callout p {{ margin: 0 0 0.35rem; color: #6d28d9; font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.08em; text-transform: uppercase; }}
+    .style-callout pre {{ margin: 0; overflow-x: auto; color: #312e81;
+      font: 0.78rem/1.55 ui-monospace, "SFMono-Regular", Consolas, monospace; white-space: pre-wrap; }}
     iframe {{ display: block; width: 100%; height: 620px; border: 0; background: #f8fafc; }}
     @media (min-width: 1100px) {{
       .gallery {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
@@ -202,7 +226,7 @@ def _gallery_index(demos: list[_Demo]) -> str:
       <p class="eyebrow">Renderer examples</p>
       <h1>Hierarchical HTML Gallery</h1>
       <p>{len(demos)} interactive examples show structured inputs, a Markdown document outline,
-        and three packaged themes.</p>
+        three packaged themes, and one caller-supplied theme.</p>
     </header>
     <section class="gallery" aria-label="Interactive hierarchy examples">
 {cards}

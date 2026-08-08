@@ -42,7 +42,8 @@
 ## Integration tests
 
 - The checked-in hierarchy gallery generator produces its index and all interactive example pages
-  from YAML filename, full JSON content, and in-memory inputs.
+  from YAML filename, full JSON content, and in-memory inputs, including its caller-supplied theme
+  and presentation-only parameter callouts.
 - Simultaneous claim processes cannot both acquire primary ownership.
 - Overlapping concurrent claims produce one safe owner and one wait outcome.
 - A real stdio subprocess initializes, advertises current work-item, deadline, release, reset, and broad-domain schemas, lists tools and resources, preserves reference and skill snapshots until explicit refresh, and shuts down cleanly.

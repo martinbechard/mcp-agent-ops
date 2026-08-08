@@ -159,7 +159,8 @@ output behavior, validation, errors, regeneration guidance, and implementation l
 
 A runnable [hierarchy gallery](examples/hierarchy-gallery/README.md) includes structured examples
 and a reviewable Markdown document outline. The examples use the packaged `default`, `outline`, and
-`midnight` themes. Generate the live previews from the repository root:
+`midnight` themes plus a deliberately distinctive caller-supplied `blueprint` theme. Generate the
+live previews from the repository root:
 
 ```bash
 uv run python examples/hierarchy-gallery/generate_gallery.py

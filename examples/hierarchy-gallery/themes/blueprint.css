@@ -1,0 +1,64 @@
+/*
+ * Copyright (c) 2026 Martin.Bechard@DevConsult.ca
+ * AI attribution: Generated with AI assistance.
+ * Summary: Provides a caller-owned blueprint theme for the hierarchical HTML gallery.
+ * Design: docs/design/high-level/architecture.md
+ * Test plan: docs/reference/test-plan.md
+ */
+
+:root {
+  color-scheme: dark;
+  --background: #061826;
+  --surface: #08263a;
+  --control: #0b3149;
+  --hover: #0d3c59;
+  --text: #d9f4ff;
+  --heading: #f0fbff;
+  --muted: #7fc4d8;
+  --key: #a5f3fc;
+  --string: #fef08a;
+  --number: #67e8f9;
+  --boolean: #f0abfc;
+  --accent: #22d3ee;
+  --branch: #1d6982;
+  --border: #1c7893;
+  --border-strong: #38bdf8;
+  --shadow: 8px 8px 0 rgb(3 105 161 / 45%);
+}
+
+body {
+  background-color: var(--background);
+  background-image:
+    linear-gradient(rgb(34 211 238 / 10%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(34 211 238 / 10%) 1px, transparent 1px);
+  background-size: 24px 24px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.hierarchy-document {
+  border: 2px solid var(--border-strong);
+  border-radius: 0;
+}
+
+.document-header {
+  border-bottom: 1px dashed var(--border-strong);
+}
+
+h1 {
+  font-family: "Arial Narrow", "Avenir Next Condensed", sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tree-children {
+  border-left-style: dashed;
+}
+
+.tree-actions button,
+.tree-levels button {
+  border-radius: 0;
+}
+
+.tree-number {
+  text-shadow: 0 0 12px rgb(34 211 238 / 55%);
+}

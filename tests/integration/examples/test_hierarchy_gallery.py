@@ -27,7 +27,7 @@ def test_gallery_generator_builds_index_and_interactive_examples(tmp_path: Path)
     pages = {
         "delivery-plan.html": ("Delivery Plan", "default", "Release the customer portal refresh"),
         "incident-review.html": ("Incident Review", "outline", "A retry policy amplified"),
-        "agent-workflow.html": ("Agent Workflow", "midnight", "bounded execution scope"),
+        "agent-workflow.html": ("Agent Workflow", "blueprint", "bounded execution scope"),
         "document-outline.html": (
             "Document Outline",
             "midnight",
@@ -50,6 +50,19 @@ def test_gallery_generator_builds_index_and_interactive_examples(tmp_path: Path)
     assert 'src="agent-workflow.html"' in index
     assert 'src="document-outline.html"' in index
     assert index.count('sandbox="allow-scripts"') == 4
+    assert index.count('class="style-callout"') == 4
+    assert index.count("<p>Presentation parameters</p>") == 4
+    for theme in ("default", "midnight", "outline", "blueprint"):
+        assert f"theme=&quot;{theme}&quot;" in index
+    assert 'themes_folder=&quot;examples/hierarchy-gallery/themes&quot;' in index
+    assert index.count("numbering=True") == 2
+    assert index.count("numbering=False") == 2
+    assert index.count("checkboxes=True") == 1
+    assert index.count("checkboxes=False") == 3
+
+    agent_workflow = (tmp_path / "agent-workflow.html").read_text(encoding="utf-8")
+    assert "background-size: 24px 24px" in agent_workflow
+    assert 'data-theme="blueprint"' in agent_workflow
 
     delivery_plan = (tmp_path / "delivery-plan.html").read_text(encoding="utf-8")
     assert '<span class="tree-number">5.1</span>' in delivery_plan

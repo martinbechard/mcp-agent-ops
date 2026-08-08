@@ -8,7 +8,13 @@ This gallery demonstrates four source and presentation combinations:
   headings and leaf text form the in-memory hierarchy that the renderer displays with dotted
   numbering, no checkboxes, and the packaged `midnight` theme.
 - `incident-review.json` is read as full JSON content and rendered with the packaged `outline` theme.
-- an in-memory Python mapping is rendered with the packaged `midnight` theme.
+- an in-memory Python mapping is rendered with the caller-supplied `blueprint` theme from
+  [`themes/blueprint.css`](themes/blueprint.css). Its graph-paper background, drafting colors,
+  square controls, and technical typography make the custom styling intentionally non-stock.
+
+Each gallery card includes a **Presentation parameters** callout generated from that example's
+rendering configuration. It shows `theme`, `numbering`, and `checkboxes`, plus `themes_folder` when
+a caller-supplied theme is used. The callout deliberately excludes source data and file parameters.
 
 Markdown parsing belongs only to this example generator. The public renderer accepts structured
 Python data, JSON/YAML content, and JSON/YAML files; it does not accept Markdown directly.
@@ -24,7 +30,8 @@ uv run python examples/hierarchy-gallery/generate_gallery.py
 
 Then open `examples/hierarchy-gallery/build/index.html` in a browser. Each card contains a live,
 collapsible preview, progressive `1`, `2`, `3`, and `All` level controls, and a link to the
-complete self-contained page.
+complete self-contained page. Compare each preview with its Presentation parameters callout to see
+which appearance and interaction options produced it.
 
 To write somewhere else, pass an explicit destination:
 

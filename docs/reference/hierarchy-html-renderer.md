@@ -258,6 +258,10 @@ Caller-supplied means that the caller supplies this CSS file and identifies its 
 `themes_folder`. The function does not accept raw CSS content as a parameter. It always reads the
 selected `<theme>.css` file and combines it with the packaged base styles.
 
+The gallery's deliberately idiosyncratic
+[`blueprint.css`](../../examples/hierarchy-gallery/themes/blueprint.css) demonstrates this route.
+It is an example-owned theme, not a packaged theme.
+
 A complete custom theme should define these variables:
 
 ```css
@@ -325,7 +329,9 @@ The checked-in [hierarchy gallery](../../examples/hierarchy-gallery/README.md) d
 - a reviewable [Markdown document outline](../../examples/hierarchy-gallery/data/document-outline.md)
   converted to structured data by the gallery generator;
 - full JSON content with the packaged `outline` theme;
-- in-memory Python data with the packaged `midnight` theme.
+- in-memory Python data with the caller-supplied `blueprint` theme;
+- generated callouts that identify each example's presentation parameters without exposing its
+  source-data parameters.
 
 Generate it from the repository root:
 
@@ -359,7 +365,9 @@ tests/
         └── test_hierarchy_gallery.py   # Reproducible gallery generation
 examples/
 └── hierarchy-gallery/
-    └── generate_gallery.py             # Runnable examples and gallery index
+    ├── generate_gallery.py             # Runnable examples and gallery index
+    └── themes/
+        └── blueprint.css               # Caller-owned custom theme example
 ```
 
 The public behavior is implemented in
