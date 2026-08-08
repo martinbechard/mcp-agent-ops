@@ -4,19 +4,19 @@ delivery_plan:
   status: in_progress
   target_date: 2026-09-18
   milestones:
-    - name: Discovery
+    Discovery:
       status: complete
       tasks:
         - Interview support and sales teams
         - Map the current onboarding journey
         - Approve measurable success criteria
-    - name: Implementation
+    Implementation:
       status: in_progress
       tasks:
         - Build the account overview
         - Add accessible empty states
         - Instrument key workflow events
-    - name: Release
+    Release:
       status: planned
       tasks:
         - Complete regression testing
@@ -30,7 +30,5 @@ delivery_plan:
       likelihood: low
       mitigation: Preserve the existing event contract
   decisions:
-    - date: 2026-08-05
-      outcome: Keep the first release limited to account administrators
-    - date: 2026-08-08
-      outcome: Use staged rollout checkpoints at 10, 50, and 100 percent
+    "2026-08-05": Keep the first release limited to account administrators
+    "2026-08-08": Use staged rollout checkpoints at 10, 50, and 100 percent

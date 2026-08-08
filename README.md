@@ -158,6 +158,8 @@ saved_path = render_hierarchy_html(
     Path("plan.yaml"),
     title="Delivery plan",
     theme="outline",
+    numbering=True,
+    checkboxes=True,
     output_filename="plan.html",
     output_folder="reports",
 )
@@ -169,6 +171,11 @@ CSS file such as `themes/roadmap.css` in a caller-owned folder and pass
 the selected theme CSS is added to the same output. When `output_filename` is omitted, the return
 value is the complete HTML string. When it is present, the function creates the optional output
 folder, writes UTF-8 HTML, and returns the resolved output path.
+
+Set `numbering=True` to prefix every node with one-based dotted paths such as `1`, `1.2`, and
+`1.2.1`; this replaces synthetic sequence labels such as `[0]`. Set `checkboxes=True` to add an
+interactive checkbox before every number or label. Checkboxes start unchecked and retain state
+only for the current page session—they do not modify the source data.
 
 A runnable [hierarchy gallery](examples/hierarchy-gallery/README.md) demonstrates YAML filename,
 full JSON content, and in-memory Python inputs with the two packaged themes and a custom dark

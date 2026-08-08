@@ -2,7 +2,8 @@
 
 This gallery demonstrates the three supported input styles and the theme extension point:
 
-- `delivery-plan.yaml` is rendered by filename with the packaged `default` theme.
+- `delivery-plan.yaml` is rendered by filename with dotted numbering, tracking checkboxes, and
+  the packaged `default` theme.
 - `incident-review.json` is read as full JSON content and rendered with the packaged `outline` theme.
 - an in-memory Python mapping is rendered with the gallery's custom `midnight` theme.
 

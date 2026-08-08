@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Verifies safe self-contained HTML rendering of hierarchical JSON and YAML data.
+# Summary: Verifies safe self-contained HTML trees, numbering, tracking controls, inputs, and themes.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
@@ -36,6 +36,21 @@ def test_renders_nested_mappings_and_sequences_as_an_interactive_tree() -> None:
     assert "Expand all" in rendered
     assert "Collapse all" in rendered
     assert 'root.addEventListener("click"' in rendered
+
+
+def test_optionally_renders_dotted_hierarchical_numbers_and_tracking_checkboxes() -> None:
+    rendered = render_hierarchy_html(
+        {"Plan": {"phases": [{"tasks": ["Write", "Review"]}]}},
+        numbering=True,
+        checkboxes=True,
+    )
+
+    for number in ("1", "1.1", "1.1.1", "1.1.1.1", "1.1.1.1.1", "1.1.1.1.2"):
+        assert f'<span class="tree-number">{number}</span>' in rendered
+        assert f'aria-label="Mark {number} complete"' in rendered
+    assert rendered.count('class="tree-checkbox"') == 6
+    assert "[0]" not in rendered
+    assert rendered.index('class="tree-checkbox"') < rendered.index('<span class="tree-number">1</span>')
 
 
 def test_escapes_titles_keys_and_values_before_inserting_them_into_html() -> None:

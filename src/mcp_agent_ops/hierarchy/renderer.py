@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Renders JSON/YAML mappings and sequences as safe, themed, collapsible HTML trees.
+# Summary: Renders JSON/YAML data as safe, themed HTML trees with optional numbering and tracking controls.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
@@ -161,39 +161,76 @@ def _value_text(value: object) -> str:
     return str(value)
 
 
-def _branch_entries(value: object) -> list[tuple[str, object]]:
+def _branch_entries(value: object, *, numbering: bool = False) -> list[tuple[str | None, object]]:
     if isinstance(value, Mapping):
         return [(str(key), child) for key, child in value.items()]
     if _is_sequence(value):
+        if numbering:
+            return [(None, child) for child in value]
         return [(f"[{index}]", child) for index, child in enumerate(value)]
     raise TypeError("Branch values must be mappings or sequences.")
 
 
-def _render_node(label: str, value: object, identifiers: count[int]) -> str:
-    safe_label = escape(label, quote=True)
+def _number_text(number_path: tuple[int, ...]) -> str:
+    return ".".join(str(part) for part in number_path)
+
+
+def _checkbox_html(label: str | None, number_path: tuple[int, ...], *, numbering: bool) -> str:
+    marker = _number_text(number_path) if numbering else label
+    safe_marker = escape(marker or "item", quote=True)
+    return (
+        '<input class="tree-checkbox" type="checkbox" '
+        f'aria-label="Mark {safe_marker} complete">'
+    )
+
+
+def _render_node(
+    label: str | None,
+    value: object,
+    identifiers: count[int],
+    number_path: tuple[int, ...],
+    *,
+    numbering: bool,
+    checkboxes: bool,
+) -> str:
+    safe_label = escape(label, quote=True) if label is not None else None
+    checkbox = _checkbox_html(label, number_path, numbering=numbering) if checkboxes else ""
+    number = f'<span class="tree-number">{_number_text(number_path)}</span>' if numbering else ""
+    key = f'<span class="tree-key">{safe_label}</span>' if safe_label is not None else ""
     if not _is_branch(value):
         kind = _value_kind(value)
         safe_value = escape(_value_text(value), quote=True)
+        separator = '<span class="tree-separator" aria-hidden="true">:</span>' if key else ""
         return (
             '<li class="tree-node tree-leaf" role="treeitem">'
             '<div class="node-line">'
-            f'<span class="tree-key">{safe_label}</span>'
-            '<span class="tree-separator" aria-hidden="true">:</span>'
+            f"{checkbox}{number}{key}{separator}"
             f'<span class="tree-value type-{kind}">{safe_value}</span>'
             "</div></li>"
         )
 
-    entries = _branch_entries(value)
+    entries = _branch_entries(value, numbering=numbering)
     node_id = f"hierarchy-node-{next(identifiers)}"
     branch_kind = "object" if isinstance(value, Mapping) else "array"
     item_label = "item" if len(entries) == 1 else "items"
-    children = "".join(_render_node(child_label, child, identifiers) for child_label, child in entries)
+    children = "".join(
+        _render_node(
+            child_label,
+            child,
+            identifiers,
+            (*number_path, child_index),
+            numbering=numbering,
+            checkboxes=checkboxes,
+        )
+        for child_index, (child_label, child) in enumerate(entries, start=1)
+    )
     return (
         '<li class="tree-node tree-branch" role="treeitem">'
         '<div class="node-line">'
+        f"{checkbox}"
         f'<button type="button" class="tree-toggle" aria-expanded="true" aria-controls="{node_id}">'
         '<span class="tree-chevron" aria-hidden="true"></span>'
-        f'<span class="tree-key">{safe_label}</span>'
+        f"{number}{key}"
         f'<span class="tree-meta">{branch_kind} · {len(entries)} {item_label}</span>'
         "</button></div>"
         f'<ul class="tree-children" id="{node_id}" role="group">{children}</ul>'
@@ -221,10 +258,28 @@ def _theme_css(theme: str, themes_folder: str | Path | None) -> str:
     return f"{base_css}\n{_read_css(candidate, 'Theme')}"
 
 
-def _render_document(hierarchy: object, title: str, theme: str, css: str) -> str:
-    entries = _branch_entries(hierarchy)
+def _render_document(
+    hierarchy: object,
+    title: str,
+    theme: str,
+    css: str,
+    *,
+    numbering: bool,
+    checkboxes: bool,
+) -> str:
+    entries = _branch_entries(hierarchy, numbering=numbering)
     identifiers: count[int] = count(1)
-    nodes = "".join(_render_node(label, value, identifiers) for label, value in entries)
+    nodes = "".join(
+        _render_node(
+            label,
+            value,
+            identifiers,
+            (index,),
+            numbering=numbering,
+            checkboxes=checkboxes,
+        )
+        for index, (label, value) in enumerate(entries, start=1)
+    )
     safe_title = escape(title, quote=True)
     safe_theme = escape(theme, quote=True)
     item_label = "item" if len(entries) == 1 else "items"
@@ -281,6 +336,8 @@ def render_hierarchy_html(
     title: str = "Hierarchy",
     theme: str = "default",
     themes_folder: str | Path | None = None,
+    numbering: bool = False,
+    checkboxes: bool = False,
     output_filename: None = None,
     output_folder: str | Path | None = None,
 ) -> str: ...
@@ -293,6 +350,8 @@ def render_hierarchy_html(
     title: str = "Hierarchy",
     theme: str = "default",
     themes_folder: str | Path | None = None,
+    numbering: bool = False,
+    checkboxes: bool = False,
     output_filename: str | Path,
     output_folder: str | Path | None = None,
 ) -> Path: ...
@@ -304,6 +363,8 @@ def render_hierarchy_html(
     title: str = "Hierarchy",
     theme: str = "default",
     themes_folder: str | Path | None = None,
+    numbering: bool = False,
+    checkboxes: bool = False,
     output_filename: str | Path | None = None,
     output_folder: str | Path | None = None,
 ) -> str | Path:
@@ -322,6 +383,12 @@ def render_hierarchy_html(
         theme: Base name of the selected CSS file, without the `.css` extension.
         themes_folder: Optional folder containing `<theme>.css`. When omitted, the
             packaged themes are used. Packaged base layout CSS is always included.
+        numbering: Whether to prefix every node with a one-based dotted hierarchy
+            number such as `1.2.3`. Synthetic sequence labels such as `[0]` are hidden
+            when numbering is enabled.
+        checkboxes: Whether to place an interactive, initially unchecked tracking
+            checkbox before each node's number or label. Checkbox state lasts only for
+            the current page session and is not written back to the source data.
         output_filename: Optional base filename. When supplied, the HTML is written and
             the resolved output `Path` is returned; otherwise the complete HTML is returned.
         output_folder: Optional destination folder, created when needed. It is valid only
@@ -346,7 +413,14 @@ def render_hierarchy_html(
         raise ValueError("output_folder requires output_filename.")
     hierarchy = _load_hierarchy(source)
     css = _theme_css(theme, themes_folder)
-    html = _render_document(hierarchy, title, theme, css)
+    html = _render_document(
+        hierarchy,
+        title,
+        theme,
+        css,
+        numbering=numbering,
+        checkboxes=checkboxes,
+    )
     if output_filename is None:
         return html
     return _save_html(html, output_filename, output_folder)

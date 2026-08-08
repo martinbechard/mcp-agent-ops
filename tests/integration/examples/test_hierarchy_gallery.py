@@ -44,3 +44,9 @@ def test_gallery_generator_builds_index_and_interactive_examples(tmp_path: Path)
     assert 'src="incident-review.html"' in index
     assert 'src="agent-workflow.html"' in index
     assert index.count('sandbox="allow-scripts"') == 3
+
+    delivery_plan = (tmp_path / "delivery-plan.html").read_text(encoding="utf-8")
+    assert '<span class="tree-number">1.5.1</span>' in delivery_plan
+    assert 'aria-label="Mark 1.5.1 complete"' in delivery_plan
+    assert 'class="tree-checkbox"' in delivery_plan
+    assert "[0]" not in delivery_plan

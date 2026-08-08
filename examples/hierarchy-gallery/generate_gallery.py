@@ -24,6 +24,8 @@ class _Demo:
     source: object
     theme: str
     themes_folder: Path | None = None
+    numbering: bool = False
+    checkboxes: bool = False
 
 
 def _demos() -> list[_Demo]:
@@ -51,9 +53,11 @@ def _demos() -> list[_Demo]:
         _Demo(
             slug="delivery-plan",
             title="Delivery Plan",
-            description="YAML filename input with the packaged default theme.",
+            description="Numbered YAML input with tracking checkboxes and the packaged default theme.",
             source=_GALLERY_ROOT / "data" / "delivery-plan.yaml",
             theme="default",
+            numbering=True,
+            checkboxes=True,
         ),
         _Demo(
             slug="incident-review",
@@ -146,6 +150,8 @@ def _build_gallery(output_folder: Path) -> Path:
             title=demo.title,
             theme=demo.theme,
             themes_folder=demo.themes_folder,
+            numbering=demo.numbering,
+            checkboxes=demo.checkboxes,
             output_filename=f"{demo.slug}.html",
             output_folder=output_folder,
         )
