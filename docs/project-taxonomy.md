@@ -14,6 +14,7 @@
 - `src/` contains installable product code.
 - `tests/` contains automated behavioral evidence.
 - `docs/` contains durable requirements, design, and reference material.
+- `examples/` contains runnable demonstrations and source inputs for public APIs.
 - `.github/` contains hosted development automation.
 - Top-level files describe installation, licensing, contribution constraints, and package metadata.
 
@@ -83,6 +84,15 @@
 - **Signals:** Data is not imported as executable product code.
 - **Filename pattern:** `tests/fixtures/<domain>/**`
 
+### Runnable Examples and Galleries
+
+- **Purpose:** Demonstrate public APIs with representative source inputs and reproducible visual output.
+- **Signals:** Files are instructional, runnable outside tests, and do not define product behavior.
+- **Filename pattern:** `examples/<feature>/**`
+- **Generated output:** `examples/<feature>/build/**` remains ignored and is rebuilt from checked-in sources.
+- **Tests location:** `tests/integration/examples/test_*.py`
+- **Example:** `examples/hierarchy-gallery/generate_gallery.py`
+
 ### Requirements
 
 - **Purpose:** Durable functional and technical requirements.
@@ -117,3 +127,4 @@
 
 - 2026-07-15: Established the initial standalone MCP agent-operations taxonomy.
 - 2026-08-08: Added packaged presentation assets for framework-independent renderers.
+- 2026-08-08: Added runnable examples and reproducible galleries.

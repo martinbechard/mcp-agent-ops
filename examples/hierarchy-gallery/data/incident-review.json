@@ -1,0 +1,52 @@
+{
+  "incident_review": {
+    "summary": {
+      "severity": "SEV-2",
+      "service": "Document export",
+      "duration_minutes": 47,
+      "customer_data_lost": false
+    },
+    "timeline": [
+      {
+        "time": "09:12",
+        "event": "Export latency alert fired"
+      },
+      {
+        "time": "09:19",
+        "event": "On-call engineer confirmed queue saturation"
+      },
+      {
+        "time": "09:41",
+        "event": "Worker pool capacity restored"
+      },
+      {
+        "time": "09:59",
+        "event": "Backlog cleared and incident resolved"
+      }
+    ],
+    "contributing_factors": {
+      "primary": "A retry policy amplified a downstream timeout",
+      "secondary": [
+        "Queue depth alert threshold was too high",
+        "The capacity runbook omitted the new worker pool"
+      ]
+    },
+    "follow_up": [
+      {
+        "action": "Cap retry concurrency",
+        "owner": "Platform team",
+        "status": "complete"
+      },
+      {
+        "action": "Lower queue depth alert threshold",
+        "owner": "Reliability team",
+        "status": "in_progress"
+      },
+      {
+        "action": "Refresh the capacity runbook",
+        "owner": "Operations team",
+        "status": "planned"
+      }
+    ]
+  }
+}

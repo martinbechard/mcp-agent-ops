@@ -1,0 +1,27 @@
+/*
+ * Copyright (c) 2026 Martin.Bechard@DevConsult.ca
+ * AI attribution: Generated with AI assistance.
+ * Summary: Provides a dark custom theme for the hierarchical HTML gallery.
+ * Design: docs/design/high-level/architecture.md
+ * Test plan: docs/reference/test-plan.md
+ */
+
+:root {
+  color-scheme: dark;
+  --background: #080d18;
+  --surface: #111827;
+  --control: #172033;
+  --hover: #1d2a42;
+  --text: #dce6f2;
+  --heading: #f8fafc;
+  --muted: #8fa3b8;
+  --key: #93c5fd;
+  --string: #86efac;
+  --number: #fdba74;
+  --boolean: #d8b4fe;
+  --accent: #60a5fa;
+  --branch: #334155;
+  --border: #26354a;
+  --border-strong: #3b4d67;
+  --shadow: 0 22px 60px rgb(0 0 0 / 35%);
+}

@@ -170,6 +170,14 @@ the selected theme CSS is added to the same output. When `output_filename` is om
 value is the complete HTML string. When it is present, the function creates the optional output
 folder, writes UTF-8 HTML, and returns the resolved output path.
 
+A runnable [hierarchy gallery](examples/hierarchy-gallery/README.md) demonstrates YAML filename,
+full JSON content, and in-memory Python inputs with the two packaged themes and a custom dark
+theme. Generate its live previews from the repository root:
+
+```bash
+uv run python examples/hierarchy-gallery/generate_gallery.py
+```
+
 ## Local MCP configuration
 
 Configure an MCP host to run:
