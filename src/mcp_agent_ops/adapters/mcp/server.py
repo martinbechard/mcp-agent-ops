@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Publishes typed FastMCP operations with a working-directory project skill overlay.
+# Summary: Publishes typed FastMCP operations with safe project skill and reference overlays.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
@@ -16,6 +16,11 @@ from pydantic import Field
 
 from mcp_agent_ops.adapters.mcp.audit import ToolAuditLog, ToolAuditMiddleware
 from mcp_agent_ops.claims.service import ClaimCommandResult, run_claim_command
+from mcp_agent_ops.reference_data.catalog import ReferenceCatalog
+from mcp_agent_ops.reference_data.models import (
+    PublishedReferenceCatalog,
+    ReferenceLoadResult,
+)
 from mcp_agent_ops.skill_catalog.catalog import SkillCatalog
 from mcp_agent_ops.skill_catalog.models import (
     BatchLoadedSkill,
@@ -46,6 +51,8 @@ AUDITED_TOOL_NAMES = frozenset({
     "claim_reset",
     "claim_status",
     "detect_technology_skills",
+    "reference_load",
+    "reference_refresh",
     "skill_find",
     "skill_list",
     "skill_load",
@@ -156,6 +163,28 @@ def configured_skill_roots() -> list[Path]:
     return [Path(value).expanduser() for value in raw.split(os.pathsep) if value]
 
 
+def configured_reference_roots() -> list[Path]:
+    """Read ordered user reference roots from the server environment.
+
+    Returns:
+        Expanded paths from `MCP_AGENT_OPS_REFERENCE_ROOTS`, split using the host
+        operating-system path separator. Empty configuration provides no user scopes.
+    """
+    raw = os.environ.get("MCP_AGENT_OPS_REFERENCE_ROOTS", "")
+    return [Path(value).expanduser() for value in raw.split(os.pathsep) if value]
+
+
+def configured_reference_names() -> list[str]:
+    """Read the exact model-readable reference filename allowlist.
+
+    Returns:
+        Values from `MCP_AGENT_OPS_REFERENCE_NAMES`, split using the host
+        operating-system path separator. The domain validates every configured name.
+    """
+    raw = os.environ.get("MCP_AGENT_OPS_REFERENCE_NAMES", "")
+    return [value for value in raw.split(os.pathsep) if value]
+
+
 def configured_detection_registry() -> Path | None:
     """Return the configured methodology-owned technology detection registry, if any."""
     value = os.environ.get("MCP_AGENT_OPS_DETECTION_REGISTRY")
@@ -231,6 +260,8 @@ def create_server(
     audit_shared: bool | None = None,
     audit_session_id: str | None = None,
     project_root: Path | None = None,
+    reference_roots: Sequence[Path] | None = None,
+    reference_names: Sequence[str] | None = None,
 ) -> FastMCP:
     """Create the MCP agent-operations server with immutable read snapshots.
 
@@ -248,15 +279,29 @@ def create_server(
         project_root: Working-directory project context used for automatic recursive
             `.agents/skills` and `.codex/skills` discovery. Defaults to the process
             working directory and is ignored unless it is inside a configured workspace.
+        reference_roots: Optional ordered user reference roots used instead of environment
+            configuration. Only direct files whose names are allowlisted are considered.
+        reference_names: Optional direct-filename allowlist used instead of environment
+            configuration for model-readable reference content.
 
     Returns:
         A FastMCP server ready for in-memory testing or stdio execution.
 
-    Claim tools mutate target Git-global claim state. Verification and skill operations
-    are read-only. Catalog and detection snapshots improve reads but never replace
-    disk-authoritative claim or skill state.
+    Claim tools mutate target Git-global claim state. Verification, skill, and reference
+    operations are read-only. Catalog and detection snapshots improve reads but never
+    replace disk-authoritative claim, skill, or reference state.
     """
     roots = list(skill_roots) if skill_roots is not None else configured_skill_roots()
+    configured_references = (
+        list(reference_roots)
+        if reference_roots is not None
+        else configured_reference_roots()
+    )
+    allowed_reference_names = (
+        list(reference_names)
+        if reference_names is not None
+        else configured_reference_names()
+    )
     registry = detection_registry or configured_detection_registry()
     workspaces = (
         list(workspace_roots)
@@ -265,6 +310,7 @@ def create_server(
     )
     active_project_root = (project_root or Path.cwd()).expanduser().resolve()
     project_roots = _project_skill_roots(active_project_root, workspaces)
+    project_reference_root = active_project_root if project_roots else None
     catalog_roots = [*project_roots, *roots]
     skill_validation_roots = [
         *catalog_roots,
@@ -296,6 +342,8 @@ def create_server(
         )
     catalog_lock = threading.Lock()
     catalog_snapshot: SkillCatalog | None = None
+    reference_lock = threading.Lock()
+    reference_snapshot: ReferenceCatalog | None = None
     detection_lock = threading.Lock()
     detection_snapshot: dict[str, object] | None = None
 
@@ -320,6 +368,30 @@ def create_server(
         replacement = build_catalog()
         with catalog_lock:
             catalog_snapshot = replacement
+        return replacement
+
+    def build_references() -> ReferenceCatalog:
+        try:
+            return ReferenceCatalog.from_scopes(
+                project_reference_root,
+                configured_references,
+                allowed_reference_names,
+            )
+        except (OSError, UnicodeError, ValueError):
+            raise ValueError("Configured reference catalog is invalid.") from None
+
+    def references() -> ReferenceCatalog:
+        nonlocal reference_snapshot
+        with reference_lock:
+            if reference_snapshot is None:
+                reference_snapshot = build_references()
+            return reference_snapshot
+
+    def refresh_references() -> ReferenceCatalog:
+        nonlocal reference_snapshot
+        replacement = build_references()
+        with reference_lock:
+            reference_snapshot = replacement
         return replacement
 
     def workspace_path(value: str) -> Path:
@@ -584,6 +656,23 @@ def create_server(
         return verify_markdown_links_domain(
             workspace_path(repository_root), patterns or ["**/*.md"]
         )
+
+    @mcp.tool
+    def reference_load(names: list[str]) -> ReferenceLoadResult:
+        """Load allowlisted direct text references aggregated across every matching scope.
+
+        Args:
+            names: One to thirty-two unique filenames in requested result order.
+
+        Returns:
+            An ordered all-or-nothing result from the active immutable reference snapshot.
+        """
+        return references().load(names)
+
+    @mcp.tool
+    def reference_refresh() -> PublishedReferenceCatalog:
+        """Atomically refresh project and configured user reference scopes."""
+        return refresh_references().public_result()
 
     @mcp.tool
     def skill_list() -> PublishedSkillCatalog:

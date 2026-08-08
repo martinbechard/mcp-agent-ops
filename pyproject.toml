@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-agent-ops"
-version = "0.6.1"
-description = "Deterministic MCP tools for agent claims, repository verification, and skill discovery."
+version = "0.7.0"
+description = "Deterministic MCP tools for agent claims, verification, reference data, and skill discovery."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 authors = [

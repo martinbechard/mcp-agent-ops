@@ -2,10 +2,11 @@
 
 `mcp-agent-ops` is a local stdio MCP server for deterministic agent-development operations that otherwise cause repeated shell and generated Python calls.
 
-The service owns five capability groups:
+The service owns six capability groups:
 
 - repository claims, worktree isolation, event journaling, archival, and contention reporting;
 - reusable YAML and Markdown verification operations;
+- allowlisted reference-data aggregation across project and user scopes;
 - snapshot-based discovery and batched loading of installed Agent Skills;
 - Agent Skill validation; and
 - evidence-based technology-skill detection.
@@ -18,7 +19,7 @@ See `docs/reference/mcp-tools.md` for the complete small-call tool and resource 
 
 ## Supported platforms
 
-The stdio server, direct claim CLI, repository locking, skill catalog, verification, and technology detection run natively on:
+The stdio server, direct claim CLI, repository locking, reference and skill catalogs, verification, and technology detection run natively on:
 
 - macOS with Python 3.11, 3.12, or 3.13;
 - Linux with Python 3.11, 3.12, or 3.13; and
@@ -139,17 +140,21 @@ Configure an MCP host to run:
 mcp-agent-ops
 ```
 
-The server uses stdio by default. Configure all three path boundaries before exposing it to an agent:
+The server uses stdio by default. Configure these boundaries before exposing it to an agent:
 
 - `MCP_AGENT_OPS_SKILL_ROOTS` contains precedence-ordered readable skill roots, separated by the operating system path separator. A root may contain child skill directories or may be one exact skill directory containing `SKILL.md`.
+- `MCP_AGENT_OPS_REFERENCE_ROOTS` contains ordered user reference roots, separated by the operating system path separator. Reference discovery checks only direct files in each root.
+- `MCP_AGENT_OPS_REFERENCE_NAMES` contains the exact model-readable direct filenames, separated by the operating system path separator. Names must not contain traversal, directory separators, or a leading dot.
 - `MCP_AGENT_OPS_DETECTION_REGISTRY` identifies the trusted methodology-owned technology registry.
 - `MCP_AGENT_OPS_WORKSPACE_ROOTS` contains allowed project and worktree roots, separated by the operating system path separator.
 
 When the server starts with its working directory beneath a configured workspace root, it automatically overlays recursively discovered skills from `<cwd>/.agents/skills` and `<cwd>/.codex/skills` ahead of the configured user roots. The `.agents` project root has precedence over the `.codex` project root. Nested project skill directories are supported; duplicate skill names inside either one project root are rejected as ambiguous. `skill_refresh` rescans both project and configured roots.
 
+For each allowlisted reference name, the server checks `<cwd>/<name>` and then each configured reference root. It includes the working-directory file only when `<cwd>` is beneath an allowed workspace. The server aggregates every direct match in search order with one newline between sources. It does not search subdirectories or apply skill-style shadowing. `reference_refresh` rescans all reference scopes.
+
 Repository, project, verification, worktree, and validation paths supplied through tools must be absolute and resolve beneath their configured boundary. Name-based skill validation uses the same catalog lookup as skill loading. Explicit skill-validation paths may also target unpublished skills anywhere beneath the authorized working project, without adding those paths to catalog discovery. Catalog discovery, skill validation, and technology detection recheck every nested manifest, metadata file, source file, and supporting resource before reading it. The server rejects missing boundary configuration, traversal, and symlink escape rather than granting ambient filesystem access.
 
-The skill catalog is built lazily and reused for the life of the server process. `skill_refresh` atomically publishes a new catalog snapshot after installed skills change. Technology registry configuration is also cached and takes effect after restarting the server. Claim state remains disk-authoritative and coordinates across server processes.
+The reference and skill catalogs are built lazily and reused for the life of the server process. `reference_refresh` and `skill_refresh` atomically publish new snapshots after source files change. Technology registry configuration is also cached and takes effect after restarting the server. Claim state remains disk-authoritative and coordinates across server processes.
 
 ### Junie on macOS
 
@@ -165,6 +170,8 @@ Use the absolute executable directory reported by `uv tool dir --bin`. Replace `
       "args": [],
       "env": {
         "MCP_AGENT_OPS_SKILL_ROOTS": "/Users/YOUR_NAME/.agents/skills:/Users/YOUR_NAME/.codex/skills",
+        "MCP_AGENT_OPS_REFERENCE_ROOTS": "/Users/YOUR_NAME/.agents/references:/Users/YOUR_NAME/.codex/references",
+        "MCP_AGENT_OPS_REFERENCE_NAMES": "lexicon.txt",
         "MCP_AGENT_OPS_DETECTION_REGISTRY": "/Users/YOUR_NAME/.agents/skills/detect-technology-skills/references/technology-skill-detection-registry.yaml",
         "MCP_AGENT_OPS_WORKSPACE_ROOTS": "/Users/YOUR_NAME/dev"
       }
@@ -189,6 +196,8 @@ Use the absolute executable directory reported by `uv tool dir --bin`. Replace t
       "args": [],
       "env": {
         "MCP_AGENT_OPS_SKILL_ROOTS": "C:\\Users\\YOUR_NAME\\.agents\\skills;C:\\Users\\YOUR_NAME\\.codex\\skills",
+        "MCP_AGENT_OPS_REFERENCE_ROOTS": "C:\\Users\\YOUR_NAME\\.agents\\references;C:\\Users\\YOUR_NAME\\.codex\\references",
+        "MCP_AGENT_OPS_REFERENCE_NAMES": "lexicon.txt",
         "MCP_AGENT_OPS_DETECTION_REGISTRY": "C:\\Users\\YOUR_NAME\\.agents\\skills\\detect-technology-skills\\references\\technology-skill-detection-registry.yaml",
         "MCP_AGENT_OPS_WORKSPACE_ROOTS": "C:\\Users\\YOUR_NAME\\dev"
       }
@@ -199,7 +208,7 @@ Use the absolute executable directory reported by `uv tool dir --bin`. Replace t
 
 Windows path lists use semicolons. Restart Junie after saving the configuration, then confirm that `mcp-agent-ops` is active and exposes its tools in MCP Settings.
 
-Evaluation runners may configure `MCP_AGENT_OPS_AUDIT_LOG` plus `MCP_AGENT_OPS_AUDIT_ROOTS` to create one exclusive digest-only JSON Lines tool-call trace. When a harness starts inherited MCP servers for a parent and subagent, set `MCP_AGENT_OPS_AUDIT_SHARED=true` plus a 32-character lowercase hexadecimal `MCP_AGENT_OPS_AUDIT_SESSION_ID`; each process then writes a separate random stream identity and process-local sequence into the same owner-only file under a POSIX file lock. Both modes record only canonical tool name, lifecycle status, call identity, sequence, and argument or result digests. Shared version-two records also carry the session and process stream identities, and their terminal records carry bounded canonical outcomes for supported deterministic operations. `skill_validate` records `VALID` when its structured `ok` field is true and `FINDINGS` when it is false. `skill_refresh` records `CATALOG` when its published `skills` snapshot is non-empty and `EMPTY` when it is empty. These labels reveal neither skill content nor validation findings. The trace never stores arguments, returned content, prompts, or configured paths. Do not configure this trace for ordinary sessions that do not need evaluator-owned call evidence.
+Evaluation runners may configure `MCP_AGENT_OPS_AUDIT_LOG` plus `MCP_AGENT_OPS_AUDIT_ROOTS` to create one exclusive digest-only JSON Lines tool-call trace. When a harness starts inherited MCP servers for a parent and subagent, set `MCP_AGENT_OPS_AUDIT_SHARED=true` plus a 32-character lowercase hexadecimal `MCP_AGENT_OPS_AUDIT_SESSION_ID`; each process then writes a separate random stream identity and process-local sequence into the same owner-only file under a POSIX file lock. Both modes record only canonical tool name, lifecycle status, call identity, sequence, and argument or result digests. Shared version-two records also carry the session and process stream identities, and their terminal records carry bounded canonical outcomes for supported deterministic operations. Reference loads record `LOADED` or `REJECTED`, and reference refresh records `CATALOG` or `EMPTY`. `skill_validate` records `VALID` or `FINDINGS`. These labels reveal no reference content, skill content, names, paths, or validation findings. The trace never stores arguments, returned content, prompts, or configured paths. Do not configure this trace for ordinary sessions that do not need evaluator-owned call evidence.
 
 An evaluator can also set `MCP_AGENT_OPS_REQUIRED_RUNTIME_DIGEST` to the pinned value returned by `--identity-json`. The server checks it before importing FastMCP or starting stdio and fails closed when the installed runtime has drifted.
 
@@ -246,4 +255,4 @@ The tag-triggered workflow reruns tests on Python 3.11, 3.12, and 3.13 before pu
 
 ## State ownership
 
-Claim registries and event journals live beneath each target repository's primary-worktree `.codex/agent-claim` directory. Read-only status and reporting do not create absent state. A first mutating operation migrates only empty legacy Git-metadata state, preserves its history, writes the version-two canonical state marker, and installs the exact incompatible registry-directory and event-file markers at the old paths. Live legacy claims are drain-only through exact release. Skill files remain authoritative in their installed roots. Process-local catalog snapshots are read versions identified by digests, not independent claim-state stores; publishing or restarting replaces them from disk.
+Claim registries and event journals live beneath each target repository's primary-worktree `.codex/agent-claim` directory. Read-only status and reporting do not create absent state. A first mutating operation migrates only empty legacy Git-metadata state, preserves its history, writes the version-two canonical state marker, and installs the exact incompatible registry-directory and event-file markers at the old paths. Live legacy claims are drain-only through exact release. Reference and skill files remain authoritative in their configured scopes. Process-local catalog snapshots are read versions identified by digests, not independent state stores; publishing or restarting replaces them from disk.

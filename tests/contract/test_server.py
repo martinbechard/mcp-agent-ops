@@ -22,6 +22,7 @@ from mcp.types import CallToolRequestParams
 from mcp_agent_ops.adapters.mcp.audit import ToolAuditLog, ToolAuditMiddleware
 from mcp_agent_ops.adapters.mcp.server import create_server
 from mcp_agent_ops.claims.engine import dispatch as dispatch_claim
+from mcp_agent_ops.reference_data.catalog import ReferenceCatalog
 from mcp_agent_ops.skill_catalog.catalog import SkillCatalog
 
 
@@ -98,6 +99,8 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
             "claim_report",
             "verify_yaml",
             "verify_markdown_links",
+            "reference_load",
+            "reference_refresh",
             "skill_list",
             "skill_find",
             "skill_read",
@@ -418,6 +421,99 @@ async def test_server_reuses_one_catalog_snapshot_until_explicit_refresh(tmp_pat
         refreshed.structured_content["catalog_revision"]
         != first.structured_content["catalog_revision"]
     )
+
+
+async def test_server_aggregates_reference_scopes_until_explicit_refresh(tmp_path: Path) -> None:
+    """Publish ordered path-free references and replace their snapshot only on refresh."""
+    project = tmp_path / "project"
+    shared = tmp_path / "shared"
+    project.mkdir()
+    shared.mkdir()
+    project_reference = project / "lexicon.txt"
+    shared_reference = shared / "lexicon.txt"
+    project_reference.write_text("project", encoding="utf-8")
+    shared_reference.write_text("shared", encoding="utf-8")
+    original_builder = ReferenceCatalog.from_scopes
+    with mock.patch.object(
+        ReferenceCatalog,
+        "from_scopes",
+        wraps=original_builder,
+    ) as build_catalog:
+        server = create_server(
+            skill_roots=[],
+            workspace_roots=[tmp_path],
+            project_root=project,
+            reference_roots=[shared],
+            reference_names=["lexicon.txt"],
+        )
+        async with Client(server) as client:
+            tools = {tool.name: tool for tool in await client.list_tools()}
+            assert set(tools["reference_load"].inputSchema["properties"]) == {"names"}
+            first = await client.call_tool(
+                "reference_load",
+                {"names": ["lexicon.txt"]},
+            )
+            assert build_catalog.call_count == 1
+            assert first.structured_content["ok"] is True
+            reference = first.structured_content["references"][0]
+            assert reference["content"] == "project\nshared"
+            assert reference["source_count"] == 2
+            assert [source["scope"] for source in reference["sources"]] == [
+                "project",
+                "configured:0",
+            ]
+            assert "path" not in json.dumps(first.structured_content)
+
+            project_reference.write_text("changed", encoding="utf-8")
+            unchanged = await client.call_tool(
+                "reference_load",
+                {"names": ["lexicon.txt"]},
+            )
+            assert unchanged.structured_content == first.structured_content
+
+            published = await client.call_tool("reference_refresh", {})
+            refreshed = await client.call_tool(
+                "reference_load",
+                {"names": ["lexicon.txt"]},
+            )
+            assert build_catalog.call_count == 2
+            assert published.structured_content["names"] == ["lexicon.txt"]
+            assert refreshed.structured_content["references"][0]["content"] == "changed\nshared"
+
+            invalid = await client.call_tool(
+                "reference_load",
+                {"names": ["../private.txt"]},
+            )
+            assert invalid.structured_content["ok"] is False
+            assert invalid.structured_content["errors"][0]["code"] == "invalid_reference_name"
+
+
+async def test_server_ignores_project_references_outside_authorized_workspaces(
+    tmp_path: Path,
+) -> None:
+    """Do not turn an unauthorized working directory into a reference scope."""
+    workspace = tmp_path / "workspace"
+    project = tmp_path / "outside-project"
+    shared = tmp_path / "shared"
+    for root in (workspace, project, shared):
+        root.mkdir()
+    (project / "lexicon.txt").write_text("outside", encoding="utf-8")
+    (shared / "lexicon.txt").write_text("shared", encoding="utf-8")
+    server = create_server(
+        skill_roots=[],
+        workspace_roots=[workspace],
+        project_root=project,
+        reference_roots=[shared],
+        reference_names=["lexicon.txt"],
+    )
+
+    async with Client(server) as client:
+        loaded = await client.call_tool(
+            "reference_load",
+            {"names": ["lexicon.txt"]},
+        )
+
+    assert loaded.structured_content["references"][0]["content"] == "shared"
 
 
 async def test_server_overlays_nested_project_skills_from_working_directory(
@@ -1109,6 +1205,46 @@ async def test_shared_audit_records_bounded_skill_load_outcomes(tmp_path: Path) 
     assert "references/guide.md" not in audit
     assert str(skills) not in audit
     assert '"missing"' not in audit
+
+
+async def test_shared_audit_records_bounded_reference_outcomes(tmp_path: Path) -> None:
+    """Expose reference lifecycle outcomes without retaining names, paths, or content."""
+    references = tmp_path / "references"
+    evidence = tmp_path / "evidence"
+    references.mkdir()
+    evidence.mkdir()
+    (references / "lexicon.txt").write_text("private vocabulary", encoding="utf-8")
+    audit_log = evidence / "mcp-audit.jsonl"
+    server = create_server(
+        skill_roots=[],
+        reference_roots=[references],
+        reference_names=["lexicon.txt", "missing.txt"],
+        audit_log=audit_log,
+        audit_roots=[evidence],
+        audit_shared=True,
+        audit_session_id="f" * 32,
+    )
+
+    async with Client(server) as client:
+        await client.call_tool("reference_refresh", {})
+        await client.call_tool("reference_load", {"names": ["lexicon.txt"]})
+        await client.call_tool("reference_load", {"names": ["missing.txt"]})
+
+    audit = audit_log.read_text(encoding="utf-8")
+    completed = [
+        (record["tool"], record.get("outcome"))
+        for record in (json.loads(line) for line in audit.splitlines())
+        if record["status"] == "completed"
+    ]
+    assert completed == [
+        ("reference_refresh", "CATALOG"),
+        ("reference_load", "LOADED"),
+        ("reference_load", "REJECTED"),
+    ]
+    assert "lexicon.txt" not in audit
+    assert "missing.txt" not in audit
+    assert "private vocabulary" not in audit
+    assert str(references) not in audit
 
 
 async def test_shared_audit_records_bounded_validation_and_refresh_outcomes(

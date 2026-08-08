@@ -71,6 +71,19 @@ Verification results contain `ok`, `checked_files`, and structured `findings`. T
 
 `repository_root` must be absolute and resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`.
 
+## Reference Data
+
+Reference tools return allowlisted text from the active immutable snapshot.
+
+| Tool | Required arguments | Purpose |
+|---|---|---|
+| `reference_load` | `names` | Load one to thirty-two aggregated references in requested order. |
+| `reference_refresh` | none | Build and atomically publish a new reference snapshot. |
+
+`MCP_AGENT_OPS_REFERENCE_NAMES` contains the exact permitted direct filenames. `MCP_AGENT_OPS_REFERENCE_ROOTS` contains ordered user roots. Both lists use the operating-system path separator. When the working directory is beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`, the server searches its direct file first. It then searches each configured user root without recursion.
+
+Every matching scope contributes to the result. The server joins source contents with one newline. It deduplicates scopes that resolve to the same file. Results contain a source count, path-free scope labels, byte counts, source digests, and an aggregate digest. One reference can include at most 64 sources, and one load can return at most 1 MiB of combined reference content. Invalid, duplicate, missing, unsafe, non-text, or oversized requests return no partial content. Newly added or changed references require `reference_refresh`.
+
 ## Skills
 
 | Tool | Required arguments | Purpose |
@@ -104,3 +117,5 @@ Tool fallbacks remain available because some MCP hosts do not expose resources d
 `MCP_AGENT_OPS_AUDIT_LOG` enables one evaluator-owned JSON Lines tool lifecycle trace when `MCP_AGENT_OPS_AUDIT_ROOTS` also contains its destination. The default exclusive mode requires a new file and preserves the version-one record contract. `MCP_AGENT_OPS_AUDIT_SHARED=true` plus a 32-character lowercase hexadecimal `MCP_AGENT_OPS_AUDIT_SESSION_ID` permits inherited parent and subagent server processes to open the same owner-only file; version-two records carry that session identity, a random stream identity, and a process-local sequence, and writes are serialized with a POSIX file lock. Both modes contain only canonical tool name, call identity, sequence, status, and SHA-256 digests. Shared version-two terminal records also contain a bounded canonical outcome when the operation exposes one. The audit is not an MCP tool, is invisible to the model, and never stores arguments or returned content.
 
 Successful `skill_load` and `skill_resource_load` calls report `LOADED`; structured batch rejections report `REJECTED`. These outcomes disclose no skill names, resource paths, rejection codes, messages, or loaded content.
+
+Successful `reference_load` calls report `LOADED`; structured rejections report `REJECTED`. `reference_refresh` reports `CATALOG` when at least one reference is available and `EMPTY` otherwise. These outcomes disclose no reference names, paths, rejection codes, messages, or content.

@@ -6,7 +6,7 @@
 - Keep domain behavior independent of MCP and CLI adapters.
 - Place executable product code under `src/mcp_agent_ops`.
 - Mirror source-domain packages under `tests/unit`.
-- Keep runtime repositories, claim registries, journals, and installed skill roots outside this repository.
+- Keep runtime repositories, claim registries, journals, installed reference roots, and installed skill roots outside this repository.
 - Extend this taxonomy before introducing a file category that does not fit below.
 
 ## Top-Level Folder Principles
@@ -21,7 +21,7 @@
 
 ### Product Domain Modules
 
-- **Purpose:** Framework-independent claims, verification, and skill-catalog behavior.
+- **Purpose:** Framework-independent claims, verification, reference-data, and skill-catalog behavior.
 - **Signals:** Code is callable without starting an MCP server or parsing a CLI command.
 - **Filename pattern:** `src/mcp_agent_ops/<domain>/*.py`
 - **Tests location:** `tests/unit/<domain>/test_*.py`

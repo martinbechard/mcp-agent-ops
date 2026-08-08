@@ -3,7 +3,7 @@
 The project uses a domain-and-adapter structure.
 
 ```text
-MCP host -> FastMCP adapter -> domain service -> Git repository / skill roots
+MCP host -> FastMCP adapter -> domain service -> Git repository / reference and skill roots
 CLI user -> CLI adapter -----^
 ```
 
@@ -11,6 +11,7 @@ CLI user -> CLI adapter -----^
 
 - `claims` owns registry locking, scope overlap, worktree selection, lifecycle events, journal maintenance, and reporting.
 - `verification` owns deterministic YAML and Markdown checks.
+- `reference_data` owns direct-file scope aggregation, filename allowlists, immutable content snapshots, batch limits, and digests.
 - `skill_catalog` owns root precedence, metadata extraction, immutable manifest snapshots, batch limits, digests, and safe content retrieval.
 - `skill_validation` owns deterministic Agent Skill structure validation.
 - `technology_detection` owns evidence-based skill selection from a trusted parsed registry.
@@ -37,9 +38,17 @@ One catalog snapshot is built lazily per server process. When the process workin
 
 The technology registry is parsed once per server process. A detection call computes owner evidence and manifest dependencies once per requested scope, then evaluates all configured skill predicates against that shared evidence.
 
+## Reference-loading boundary
+
+The adapter authorizes the working project through the configured workspace roots. It then passes that project root, the configured user roots, and the configured filename allowlist to `reference_data`. The domain package does not depend on FastMCP or environment parsing.
+
+For each allowlisted name, the domain checks one direct file in the project root and one direct file in each configured user root. It does not recurse. It deduplicates identical resolved files, then joins all remaining UTF-8 contents with one newline in project-first search order. The model-facing result identifies each source by a path-free scope label and SHA-256 digest.
+
+One reference snapshot is built lazily per server process. The snapshot pairs aggregated content with its digest. `reference_refresh` builds a replacement outside the publication lock and swaps it atomically. Readers observe either the complete old snapshot or the complete new snapshot.
+
 ## Filesystem boundaries
 
-The host configures separate user skill roots and workspace roots. Automatic project skill roots are accepted only when the process working directory is beneath an allowed workspace, and their conventional paths must remain beneath that project after symlink resolution. Model-supplied repository, project, verification, validation, and worktree paths are resolved only beneath those boundaries after symlink resolution. Skill validation and technology detection repeat containment at each nested read boundary, so a safe top-level directory cannot delegate access through an escaping manifest, metadata, source, or owner-evidence symlink. Model-facing catalog, validation, and detection results omit configured host paths; `skill_find` is the narrow operation that intentionally returns one selected manifest path. The boundary is reproducibility and host-state protection for ordinary agent work; it is not a general hostile-code sandbox.
+The host configures separate user reference roots, user skill roots, and workspace roots. Automatic project scopes are accepted only when the process working directory is beneath an allowed workspace. The reference allowlist prevents arbitrary working-project files from becoming model-readable. Every reference candidate must resolve beneath its selected scope and must be a regular UTF-8 file. Model-supplied repository, project, verification, validation, and worktree paths are resolved only beneath their boundaries after symlink resolution. Skill validation and technology detection repeat containment at each nested read boundary. Model-facing reference, catalog, validation, and detection results omit configured host paths; `skill_find` is the narrow operation that intentionally returns one selected manifest path. The boundary is reproducibility and host-state protection for ordinary agent work; it is not a general hostile-code sandbox.
 
 ## Transport
 

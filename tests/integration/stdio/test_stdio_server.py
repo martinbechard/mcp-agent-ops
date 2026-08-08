@@ -17,6 +17,7 @@ from fastmcp.exceptions import ToolError
 
 
 async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: Path) -> None:
+    """Exercise the advertised skill and reference snapshot contracts through stdio."""
     skill = tmp_path / "skills" / "example"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text(
@@ -26,6 +27,14 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
     )
     environment = os.environ.copy()
     environment["MCP_AGENT_OPS_SKILL_ROOTS"] = str(tmp_path / "skills")
+    reference_root = tmp_path / "references"
+    reference_root.mkdir()
+    project_reference = tmp_path / "lexicon.txt"
+    project_reference.write_text("project vocabulary", encoding="utf-8")
+    (reference_root / "lexicon.txt").write_text("shared vocabulary", encoding="utf-8")
+    environment["MCP_AGENT_OPS_REFERENCE_ROOTS"] = str(reference_root)
+    environment["MCP_AGENT_OPS_REFERENCE_NAMES"] = "lexicon.txt"
+    environment["MCP_AGENT_OPS_WORKSPACE_ROOTS"] = str(tmp_path)
     environment["MCP_AGENT_OPS_AUDIT_LOG"] = str(tmp_path / "mcp-audit.jsonl")
     environment["MCP_AGENT_OPS_AUDIT_ROOTS"] = str(tmp_path)
     transport = StdioTransport(
@@ -42,6 +51,8 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
         assert "skill_find" in names
         assert "skill_load" in names
         assert "skill_refresh" in names
+        assert "reference_load" in names
+        assert "reference_refresh" in names
         assert "claim_extend_deadline" in names
         assert "claim_reset" in names
         acquire = next(tool for tool in tools if tool.name == "claim_acquire")
@@ -75,12 +86,35 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
         await client.call_tool("skill_refresh", {})
         refreshed = await client.call_tool("skill_load", {"names": ["example"]})
         assert refreshed.structured_content["skills"][0]["content"].endswith("# Changed\n")
+        first_reference = await client.call_tool(
+            "reference_load",
+            {"names": ["lexicon.txt"]},
+        )
+        assert first_reference.structured_content["references"][0]["content"] == (
+            "project vocabulary\nshared vocabulary"
+        )
+        project_reference.write_text("changed vocabulary", encoding="utf-8")
+        unchanged_reference = await client.call_tool(
+            "reference_load",
+            {"names": ["lexicon.txt"]},
+        )
+        assert unchanged_reference.structured_content == first_reference.structured_content
+        await client.call_tool("reference_refresh", {})
+        refreshed_reference = await client.call_tool(
+            "reference_load",
+            {"names": ["lexicon.txt"]},
+        )
+        assert refreshed_reference.structured_content["references"][0]["content"] == (
+            "changed vocabulary\nshared vocabulary"
+        )
 
     audit = (tmp_path / "mcp-audit.jsonl").read_text(encoding="utf-8")
     assert '"tool":"skill_load"' in audit
+    assert '"tool":"reference_load"' in audit
     assert '"status":"completed"' in audit
     assert '"outcome"' not in audit
     assert "Stdio example" not in audit
+    assert "vocabulary" not in audit
 
 
 async def test_real_stdio_servers_share_one_session_bound_audit(tmp_path: Path) -> None:

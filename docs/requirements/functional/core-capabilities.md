@@ -21,6 +21,16 @@
 - Results identify every checked file and return structured diagnostics suitable for agent decisions.
 - Verification never mutates the inspected repository.
 
+## Reference Data
+
+- The service loads only allowlisted direct UTF-8 reference filenames.
+- An authorized working-project match precedes matches from configured user roots.
+- Every matching scope contributes to one newline-separated aggregation; later matches do not shadow earlier matches.
+- Reference discovery does not search subdirectories.
+- A caller can load several aggregated references in one ordered, bounded, all-or-nothing operation.
+- Model-facing reference results contain content, source counts, byte counts, and digests without host filesystem paths.
+- An explicit refresh builds a replacement reference snapshot and publishes it atomically.
+
 ## Skill Catalog
 
 - The service overlays recursively nested skills from conventional working-directory project roots ahead of skills from configured user roots.
@@ -45,6 +55,7 @@
 - The service starts over stdio without writing non-protocol output to standard output.
 - A non-starting command reports package version and a location-independent digest of installed runtime resources.
 - Tool results are structured and schema-described.
+- Reference content is available through a bounded MCP tool.
 - Skill content is available as MCP resources and through tool fallbacks for tool-only hosts.
 - Claim results are produced through a structured in-process dispatcher while preserving the direct CLI contract.
 - An explicitly configured evaluation audit records digest-only tool lifecycle evidence without retaining arguments or results.

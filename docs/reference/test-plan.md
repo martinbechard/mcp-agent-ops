@@ -4,6 +4,7 @@
 
 - YAML duplicate-key, syntax, selection, and path-boundary behavior.
 - Markdown local-link resolution, anchors, missing targets, ignored remote schemes, and malformed links.
+- Project-first reference aggregation, ordered user scopes, direct-only discovery, filename allowlisting, duplicate resolved-file suppression, UTF-8 decoding, immutable content and digest pairing, batch rejection, size limits, and symlink escape.
 - Working-directory project overlays, recursive nested project discovery, skill-root precedence, name-to-path lookup, same-root ambiguity rejection, metadata parsing, digest/content pairing, hidden install roots, resource listing, shadowing, symlink escape, explicit-refresh visibility, batch ordering, batch rejection, and traversal rejection.
 - Technology registry reuse and one manifest-evidence computation per scope.
 - Nested source, owner-manifest, owner-evidence, skill-manifest, and adapter-metadata symlink escape rejection, including explicitly allowed secondary skill roots and safe in-project links.
@@ -26,11 +27,11 @@
 
 - Stable non-starting command-line package version and installed-runtime identity.
 - Fail-closed startup when an evaluator-pinned installed-runtime digest does not match.
-- Published MCP tool names and bounded input/output schemas, including work-item fields, resource timing, deadline extension, release disposition, reset, all three broad claim domains, precedence-resolved skill path lookup, validation by name or absolute path, batch loading, and explicit refresh.
+- Published MCP tool names and bounded input/output schemas, including work-item fields, resource timing, deadline extension, release disposition, reset, all three broad claim domains, aggregated reference loading, precedence-resolved skill path lookup, validation by name or absolute path, batch loading, and explicit refresh.
 - In-memory calls for each capability group and immutable catalog reuse across repeated calls.
 - CLI and MCP parity for the canonical registry path and structured migration stops.
 - Rejection of repository, worktree, verification, validation, and detection paths outside configured roots.
-- Path-free catalog errors plus path-free skill-validation and technology-detection results.
+- Path-free reference and skill catalog errors plus path-free skill-validation and technology-detection results.
 - Digest-only tool audit lifecycle, exclusive audit-root confinement, safe shared parent and subagent streams, content omission, and real stdio evidence.
 - Skill catalog and skill-content MCP resources.
 
@@ -38,7 +39,7 @@
 
 - Simultaneous claim processes cannot both acquire primary ownership.
 - Overlapping concurrent claims produce one safe owner and one wait outcome.
-- A real stdio subprocess initializes, advertises current work-item, deadline, release, reset, and broad-domain schemas, lists tools and resources, preserves a catalog snapshot until explicit refresh, and shuts down cleanly.
+- A real stdio subprocess initializes, advertises current work-item, deadline, release, reset, and broad-domain schemas, lists tools and resources, preserves reference and skill snapshots until explicit refresh, and shuts down cleanly.
 - Windows CI runs the complete claim compatibility suite plus a real stdio subprocess; evaluator-only shared audit remains on its documented POSIX boundary.
 
 ## Release gates
