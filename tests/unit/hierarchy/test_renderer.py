@@ -58,12 +58,40 @@ def test_optionally_renders_dotted_hierarchical_numbers_and_tracking_checkboxes(
         checkboxes=True,
     )
 
-    for number in ("1", "1.1", "1.1.1", "1.1.1.1", "1.1.1.1.1", "1.1.1.1.2"):
+    for number in ("1", "1.1", "1.1.1", "1.1.1.1", "1.1.1.2"):
         assert f'<span class="tree-number">{number}</span>' in rendered
         assert f'aria-label="Mark {number} complete"' in rendered
-    assert rendered.count('class="tree-checkbox"') == 6
+    assert rendered.count('class="tree-checkbox"') == 5
     assert "[0]" not in rendered
     assert rendered.index('class="tree-checkbox"') < rendered.index('<span class="tree-number">1</span>')
+
+
+def test_singleton_root_branch_is_transparent_to_numbering_and_tracking() -> None:
+    rendered = render_hierarchy_html(
+        {
+            "Delivery plan": {
+                "Objective": "Release the portal",
+                "Milestones": {"Discovery": "Complete"},
+            }
+        },
+        numbering=True,
+        checkboxes=True,
+    )
+
+    assert 'class="tree-toggle" data-depth="0"' in rendered
+    assert '<span class="tree-key">Delivery plan</span>' in rendered
+    assert 'aria-label="Mark item complete"' not in rendered
+    assert '<span class="tree-number">1</span><span class="tree-key">Objective</span>' in rendered
+    assert '<span class="tree-number">2</span><span class="tree-key">Milestones</span>' in rendered
+    assert '<span class="tree-number">2.1</span><span class="tree-key">Discovery</span>' in rendered
+    assert rendered.count('class="tree-checkbox"') == 3
+
+
+def test_singleton_scalar_root_remains_numbered_and_trackable() -> None:
+    rendered = render_hierarchy_html({"Status": "Ready"}, numbering=True, checkboxes=True)
+
+    assert '<span class="tree-number">1</span><span class="tree-key">Status</span>' in rendered
+    assert 'aria-label="Mark 1 complete"' in rendered
 
 
 def test_escapes_titles_keys_and_values_before_inserting_them_into_html() -> None:

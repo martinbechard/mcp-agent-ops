@@ -52,17 +52,30 @@ def test_gallery_generator_builds_index_and_interactive_examples(tmp_path: Path)
     assert index.count('sandbox="allow-scripts"') == 4
 
     delivery_plan = (tmp_path / "delivery-plan.html").read_text(encoding="utf-8")
-    assert '<span class="tree-number">1.5.1</span>' in delivery_plan
-    assert 'aria-label="Mark 1.5.1 complete"' in delivery_plan
+    assert '<span class="tree-number">5.1</span>' in delivery_plan
+    assert 'aria-label="Mark 5.1 complete"' in delivery_plan
+    assert '<span class="tree-number">1</span><span class="tree-key">Objective</span>' in delivery_plan
+    assert 'class="tree-toggle" data-depth="0"' in delivery_plan
+    assert 'aria-label="Mark item complete"' not in delivery_plan
     assert 'class="tree-checkbox"' in delivery_plan
     assert 'data-level="1"' in delivery_plan
     assert 'data-level="2"' in delivery_plan
     assert 'data-level="3"' in delivery_plan
     assert 'data-level="all"' in delivery_plan
     assert "[0]" not in delivery_plan
+    for identifier_label in (
+        "delivery_plan",
+        "target_date",
+        "in_progress",
+        "design_approval",
+        "analytics_delay",
+    ):
+        assert identifier_label not in delivery_plan
+    for document_label in ("Delivery plan", "Target date", "In progress", "Design approval", "Analytics delay"):
+        assert document_label in delivery_plan
 
     document_outline = (tmp_path / "document-outline.html").read_text(encoding="utf-8")
-    assert '<span class="tree-number">1.2.1</span>' in document_outline
+    assert '<span class="tree-number">2.1</span>' in document_outline
     assert "Product Requirements Document" in document_outline
     assert 'class="tree-checkbox"' not in document_outline
     assert "[0]" not in document_outline

@@ -1,34 +1,34 @@
-delivery_plan:
-  objective: Release the customer portal refresh
-  owner: Product delivery
-  status: in_progress
-  target_date: 2026-09-18
-  milestones:
+Delivery plan:
+  Objective: Release the customer portal refresh
+  Owner: Product delivery
+  Status: In progress
+  Target date: 2026-09-18
+  Milestones:
     Discovery:
-      status: complete
-      tasks:
+      Status: Complete
+      Tasks:
         - Interview support and sales teams
         - Map the current onboarding journey
         - Approve measurable success criteria
     Implementation:
-      status: in_progress
-      tasks:
+      Status: In progress
+      Tasks:
         - Build the account overview
         - Add accessible empty states
         - Instrument key workflow events
     Release:
-      status: planned
-      tasks:
+      Status: Planned
+      Tasks:
         - Complete regression testing
         - Publish operator notes
         - Monitor the staged rollout
-  risks:
-    design_approval:
-      likelihood: medium
-      mitigation: Hold twice-weekly decision reviews
-    analytics_delay:
-      likelihood: low
-      mitigation: Preserve the existing event contract
-  decisions:
+  Risks:
+    Design approval:
+      Likelihood: Medium
+      Mitigation: Hold twice-weekly decision reviews
+    Analytics delay:
+      Likelihood: Low
+      Mitigation: Preserve the existing event contract
+  Decisions:
     "2026-08-05": Keep the first release limited to account administrators
     "2026-08-08": Use staged rollout checkpoints at 10, 50, and 100 percent

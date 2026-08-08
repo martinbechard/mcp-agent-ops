@@ -2,8 +2,8 @@
 
 This gallery demonstrates four source and presentation combinations:
 
-- `delivery-plan.yaml` is rendered by filename with dotted numbering, tracking checkboxes, and
-  the packaged `default` theme.
+- `delivery-plan.yaml` uses document-style labels and a transparent singleton wrapper. Its plan
+  entries use dotted numbering, tracking checkboxes, and the packaged `default` theme.
 - [`document-outline.md`](data/document-outline.md) provides a reviewable heading outline. Its
   headings and leaf text form the in-memory hierarchy that the renderer displays with dotted
   numbering, no checkboxes, and the packaged `midnight` theme.

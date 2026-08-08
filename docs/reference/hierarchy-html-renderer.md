@@ -83,8 +83,8 @@ render_hierarchy_html(
 | `title` | `str` | Sets both the browser title and visible page heading. It is HTML-escaped. Default: `Hierarchy`. |
 | `theme` | Simple base name | Selects `<theme>.css`. Packaged choices are `default`, `outline`, and `midnight`. Default: `default`. |
 | `themes_folder` | `str`, `Path`, or `None` | Selects a caller-owned theme folder. Packaged themes are used when omitted. |
-| `numbering` | `bool` | Adds one-based dotted numbers such as `1`, `1.2`, and `1.2.1`. Default: `False`. |
-| `checkboxes` | `bool` | Adds an initially unchecked tracking checkbox to every node. Default: `False`. |
+| `numbering` | `bool` | Adds one-based dotted numbers such as `1`, `1.2`, and `1.2.1`. A singleton branch root is an unnumbered wrapper. Default: `False`. |
+| `checkboxes` | `bool` | Adds an initially unchecked tracking checkbox to each trackable node. A transparent singleton wrapper is not trackable. Default: `False`. |
 | `output_filename` | Base filename or `None` | Writes the document when supplied. A directory component is not accepted. |
 | `output_folder` | `str`, `Path`, or `None` | Selects or creates the destination folder. Requires `output_filename` and defaults to the current directory. |
 
@@ -161,19 +161,22 @@ Every generated document begins fully expanded and provides two control groups.
 
 ### Progressive level controls
 
-The `1`, `2`, `3`, and `All` buttons reveal the hierarchy a layer at a time:
+The `1`, `2`, `3`, and `All` buttons reveal the numbered hierarchy a layer at a time:
 
 | Control | Visible result |
 | --- | --- |
-| `1` | Top-level rows only. |
-| `2` | Top-level rows and their immediate children. |
-| `3` | The first three levels. |
+| `1` | The first numbered level. Any transparent singleton wrapper remains visible and open. |
+| `2` | The first two numbered levels. |
+| `3` | The first three numbered levels. |
 | `All` | Every level. |
 
 **Expand all** selects the same state as `All`; **Collapse all** selects the same state as `1`.
 Manually toggling an individual branch clears the active level indicator because the tree no longer
 matches a global preset. Trees deeper than level 3 remain accessible through `All` and individual
 branch controls.
+
+The numeric controls use displayed numbering depth. An unnumbered singleton wrapper has depth `0`,
+so level `1` opens that wrapper and displays its children as the first numbered level.
 
 The generated controls include accessibility metadata:
 
@@ -184,8 +187,7 @@ The generated controls include accessibility metadata:
 ## Numbering
 
 With `numbering=False`, mapping nodes use their keys and sequence entries use zero-based synthetic
-labels such as `[0]`. With `numbering=True`, every mapping and sequence node receives a one-based
-dotted path:
+labels such as `[0]`. With `numbering=True`, trackable nodes receive one-based dotted paths:
 
 ```text
 1
@@ -195,12 +197,23 @@ dotted path:
 1.2
 ```
 
+When the root mapping contains one item and that item's value is another mapping or sequence, the
+renderer treats the first item as a structural wrapper:
+
+- The wrapper label remains visible.
+- The wrapper has no number or checkbox.
+- The wrapper's children begin at `1`, `2`, and so on.
+
+For example, a `Delivery plan` wrapper can contain `1 Objective`, `2 Owner`, and `5 Milestones`.
+Nested milestone items continue as `5.1`, `5.2`, and `5.3`.
+
 Sequence labels such as `[0]` are omitted in numbered output. Mapping keys remain visible beside
 their numbers.
 
 ## Tracking checkboxes and persistence
 
-`checkboxes=True` places a native checkbox before every node. The control is intentionally simple:
+`checkboxes=True` places a native checkbox before each trackable node. An unnumbered singleton
+wrapper is structural and does not receive a checkbox. Each checkbox is intentionally simple:
 
 - it starts unchecked on each page load;
 - its state exists only in the current browser DOM;

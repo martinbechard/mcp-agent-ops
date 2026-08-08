@@ -213,8 +213,10 @@ def _render_node(
     checkboxes: bool,
 ) -> str:
     safe_label = escape(label, quote=True) if label is not None else None
-    checkbox = _checkbox_html(label, number_path, numbering=numbering) if checkboxes else ""
-    number = f'<span class="tree-number">{_number_text(number_path)}</span>' if numbering else ""
+    checkbox = _checkbox_html(label, number_path, numbering=numbering) if checkboxes and number_path else ""
+    number = (
+        f'<span class="tree-number">{_number_text(number_path)}</span>' if numbering and number_path else ""
+    )
     key = f'<span class="tree-key">{safe_label}</span>' if safe_label is not None else ""
     if not _is_branch(value):
         kind = _value_kind(value)
@@ -289,17 +291,31 @@ def _render_document(
 ) -> str:
     entries = _branch_entries(hierarchy, numbering=numbering)
     identifiers: count[int] = count(1)
-    nodes = "".join(
-        _render_node(
+    transparent_singleton = (
+        numbering and isinstance(hierarchy, Mapping) and len(entries) == 1 and _is_branch(entries[0][1])
+    )
+    if transparent_singleton:
+        label, value = entries[0]
+        nodes = _render_node(
             label,
             value,
             identifiers,
-            (index,),
-            numbering=numbering,
+            (),
+            numbering=True,
             checkboxes=checkboxes,
         )
-        for index, (label, value) in enumerate(entries, start=1)
-    )
+    else:
+        nodes = "".join(
+            _render_node(
+                label,
+                value,
+                identifiers,
+                (index,),
+                numbering=numbering,
+                checkboxes=checkboxes,
+            )
+            for index, (label, value) in enumerate(entries, start=1)
+        )
     safe_title = escape(title, quote=True)
     safe_theme = escape(theme, quote=True)
     item_label = "item" if len(entries) == 1 else "items"
@@ -413,12 +429,15 @@ def render_hierarchy_html(
         theme: Base name of the selected CSS file, without the `.css` extension.
         themes_folder: Optional folder containing `<theme>.css`. When omitted, the
             packaged themes are used. Packaged base layout CSS is always included.
-        numbering: Whether to prefix every node with a one-based dotted hierarchy
-            number such as `1.2.3`. Synthetic sequence labels such as `[0]` are hidden
-            when numbering is enabled.
+        numbering: Whether to prefix nodes with one-based dotted hierarchy numbers such
+            as `1.2.3`. A singleton root mapping whose value is another branch remains
+            visible as an unnumbered structural label; its children begin at `1`.
+            Synthetic sequence labels such as `[0]` are hidden when numbering is enabled.
         checkboxes: Whether to place an interactive, initially unchecked tracking
-            checkbox before each node's number or label. Checkbox state lasts only for
-            the current page session and is not written back to the source data.
+            checkbox before each trackable node's number or label. An unnumbered
+            singleton root wrapper is structural and receives no checkbox. Checkbox
+            state lasts only for the current page session and is not written back to
+            the source data.
         output_filename: Optional base filename. When supplied, the HTML is written and
             the resolved output `Path` is returned; otherwise the complete HTML is returned.
         output_folder: Optional destination folder, created when needed. It is valid only
