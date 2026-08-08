@@ -38,6 +38,19 @@ def test_renders_nested_mappings_and_sequences_as_an_interactive_tree() -> None:
     assert 'root.addEventListener("click"' in rendered
 
 
+def test_renders_progressive_level_controls_and_branch_depth_metadata() -> None:
+    rendered = render_hierarchy_html({"Plan": {"phases": [{"tasks": ["Write"]}]}})
+
+    assert 'class="tree-levels" aria-label="Expand tree to level"' in rendered
+    for level in (1, 2, 3):
+        assert f'data-level="{level}" aria-pressed="false"' in rendered
+        assert f'aria-label="Expand through level {level}"' in rendered
+        assert f'data-depth="{level}"' in rendered
+    assert 'data-level="all" aria-pressed="true"' in rendered
+    assert 'aria-label="Expand all levels"' in rendered
+    assert "depth < visibleLevel" in rendered
+
+
 def test_optionally_renders_dotted_hierarchical_numbers_and_tracking_checkboxes() -> None:
     rendered = render_hierarchy_html(
         {"Plan": {"phases": [{"tasks": ["Write", "Review"]}]}},

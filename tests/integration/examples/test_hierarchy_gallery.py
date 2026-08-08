@@ -49,4 +49,8 @@ def test_gallery_generator_builds_index_and_interactive_examples(tmp_path: Path)
     assert '<span class="tree-number">1.5.1</span>' in delivery_plan
     assert 'aria-label="Mark 1.5.1 complete"' in delivery_plan
     assert 'class="tree-checkbox"' in delivery_plan
+    assert 'data-level="1"' in delivery_plan
+    assert 'data-level="2"' in delivery_plan
+    assert 'data-level="3"' in delivery_plan
+    assert 'data-level="all"' in delivery_plan
     assert "[0]" not in delivery_plan

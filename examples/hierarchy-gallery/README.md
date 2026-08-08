@@ -14,7 +14,8 @@ uv run python examples/hierarchy-gallery/generate_gallery.py
 ```
 
 Then open `examples/hierarchy-gallery/build/index.html` in a browser. Each card contains a live,
-collapsible preview and a link to the complete self-contained page.
+collapsible preview, progressive `1`, `2`, `3`, and `All` level controls, and a link to the
+complete self-contained page.
 
 To write somewhere else, pass an explicit destination:
 

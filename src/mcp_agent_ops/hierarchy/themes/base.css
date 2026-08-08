@@ -59,13 +59,22 @@ h1 {
   font-size: 0.9rem;
 }
 
-.tree-actions {
+.tree-controls {
+  display: grid;
+  justify-items: end;
+  gap: 0.55rem;
+}
+
+.tree-actions,
+.tree-levels {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0.5rem;
 }
 
-.tree-actions button {
+.tree-actions button,
+.tree-levels button {
   padding: 0.45rem 0.75rem;
   border: 1px solid var(--border-strong);
   border-radius: 8px;
@@ -74,9 +83,36 @@ h1 {
 }
 
 .tree-actions button:hover,
-.tree-actions button:focus-visible {
+.tree-actions button:focus-visible,
+.tree-levels button:hover,
+.tree-levels button:focus-visible {
   border-color: var(--accent);
   outline: none;
+}
+
+.tree-levels {
+  gap: 0.3rem;
+}
+
+.tree-level-label {
+  margin-right: 0.15rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.tree-levels button {
+  min-width: 2rem;
+  padding: 0.25rem 0.45rem;
+  font-size: 0.82rem;
+}
+
+.tree-levels button[aria-pressed="true"] {
+  color: var(--surface);
+  border-color: var(--accent);
+  background: var(--accent);
 }
 
 .hierarchy-tree,
@@ -213,6 +249,10 @@ h1 {
 
   .document-header {
     flex-direction: column;
+  }
+
+  .tree-controls {
+    justify-items: start;
   }
 
   .tree-children {

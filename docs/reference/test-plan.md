@@ -10,8 +10,9 @@
 - Nested source, owner-manifest, owner-evidence, skill-manifest, and adapter-metadata symlink escape rejection, including explicitly allowed secondary skill roots and safe in-project links.
 - Markdown target caching within one verification operation.
 - Hierarchical mapping and sequence rendering, HTML escaping, JSON/YAML content and file input,
-  collapse/expand controls, dotted one-based numbering, optional tracking checkboxes, packaged
-  and caller-supplied themes, cyclic input rejection, and self-contained output-file writing.
+  collapse/expand controls, progressive level visibility, dotted one-based numbering, optional
+  tracking checkboxes, packaged and caller-supplied themes, cyclic input rejection, and
+  self-contained output-file writing.
 
 ## Claim compatibility tests
 

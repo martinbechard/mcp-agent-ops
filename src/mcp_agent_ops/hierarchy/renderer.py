@@ -25,6 +25,7 @@ _SCALAR_TYPES = (str, int, float, bool, date, type(None))
 _SCRIPT = """(() => {
   const root = document.querySelector("[data-hierarchy-root]");
   if (!root) return;
+  const levelControls = document.querySelectorAll("[data-level]");
 
   const setExpanded = (button, expanded) => {
     button.setAttribute("aria-expanded", String(expanded));
@@ -32,17 +33,35 @@ _SCRIPT = """(() => {
     if (children) children.hidden = !expanded;
   };
 
+  const setVisibleLevel = (level) => {
+    const visibleLevel = level === "all" ? Number.POSITIVE_INFINITY : Number(level);
+    root.querySelectorAll(".tree-toggle").forEach((button) => {
+      const depth = Number(button.getAttribute("data-depth"));
+      setExpanded(button, depth < visibleLevel);
+    });
+    levelControls.forEach((control) => {
+      control.setAttribute("aria-pressed", String(control.getAttribute("data-level") === level));
+    });
+  };
+
   root.addEventListener("click", (event) => {
     if (!(event.target instanceof Element)) return;
     const button = event.target.closest(".tree-toggle");
     if (!button || !root.contains(button)) return;
     setExpanded(button, button.getAttribute("aria-expanded") !== "true");
+    levelControls.forEach((control) => control.setAttribute("aria-pressed", "false"));
   });
 
   document.querySelectorAll("[data-action]").forEach((control) => {
     control.addEventListener("click", () => {
-      const expanded = control.getAttribute("data-action") === "expand";
-      root.querySelectorAll(".tree-toggle").forEach((button) => setExpanded(button, expanded));
+      const level = control.getAttribute("data-action") === "expand" ? "all" : "1";
+      setVisibleLevel(level);
+    });
+  });
+
+  levelControls.forEach((control) => {
+    control.addEventListener("click", () => {
+      setVisibleLevel(control.getAttribute("data-level"));
     });
   });
 })();"""
@@ -228,7 +247,8 @@ def _render_node(
         '<li class="tree-node tree-branch" role="treeitem">'
         '<div class="node-line">'
         f"{checkbox}"
-        f'<button type="button" class="tree-toggle" aria-expanded="true" aria-controls="{node_id}">'
+        f'<button type="button" class="tree-toggle" data-depth="{len(number_path)}" '
+        f'aria-expanded="true" aria-controls="{node_id}">'
         '<span class="tree-chevron" aria-hidden="true"></span>'
         f"{number}{key}"
         f'<span class="tree-meta">{branch_kind} · {len(entries)} {item_label}</span>'
@@ -300,9 +320,18 @@ def _render_document(
         <h1>{safe_title}</h1>
         <p class="document-summary">{len(entries)} top-level {item_label}</p>
       </div>
-      <div class="tree-actions" aria-label="Tree controls">
-        <button type="button" data-action="expand">Expand all</button>
-        <button type="button" data-action="collapse">Collapse all</button>
+      <div class="tree-controls">
+        <div class="tree-actions" aria-label="Tree controls">
+          <button type="button" data-action="expand">Expand all</button>
+          <button type="button" data-action="collapse">Collapse all</button>
+        </div>
+        <div class="tree-levels" aria-label="Expand tree to level">
+          <span class="tree-level-label">Levels</span>
+          <button type="button" data-level="1" aria-pressed="false" aria-label="Expand through level 1">1</button>
+          <button type="button" data-level="2" aria-pressed="false" aria-label="Expand through level 2">2</button>
+          <button type="button" data-level="3" aria-pressed="false" aria-label="Expand through level 3">3</button>
+          <button type="button" data-level="all" aria-pressed="true" aria-label="Expand all levels">All</button>
+        </div>
       </div>
     </header>
     <ul class="hierarchy-tree" role="tree" data-hierarchy-root>{nodes}</ul>
@@ -372,7 +401,8 @@ def render_hierarchy_html(
 
     Use this function for agent plans, reports, outlines, and other mapping-or-sequence
     structures that benefit from nested expand and collapse controls. Mapping order and
-    sequence order are preserved.
+    sequence order are preserved. Every document includes controls for showing only
+    levels 1, 2, or 3, or expanding the complete tree.
 
     Args:
         source: An in-memory mapping or non-string sequence, JSON or YAML text, an

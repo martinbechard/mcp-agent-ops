@@ -177,6 +177,10 @@ Set `numbering=True` to prefix every node with one-based dotted paths such as `1
 interactive checkbox before every number or label. Checkboxes start unchecked and retain state
 only for the current page session—they do not modify the source data.
 
+Every rendered document also includes `1`, `2`, `3`, and `All` level controls beneath the
+Expand All and Collapse All actions. Selecting a number expands branches above that depth and
+collapses branches at that depth, making it possible to reveal the hierarchy one layer at a time.
+
 A runnable [hierarchy gallery](examples/hierarchy-gallery/README.md) demonstrates YAML filename,
 full JSON content, and in-memory Python inputs with the two packaged themes and a custom dark
 theme. Generate its live previews from the repository root:
