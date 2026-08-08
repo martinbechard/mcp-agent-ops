@@ -43,6 +43,12 @@ The server provides path-free catalog listing and content retrieval, but it does
 
 One catalog snapshot is built lazily per server process. When the process working directory resolves beneath an allowed workspace, the adapter prepends recursive `<cwd>/.agents/skills` and `<cwd>/.codex/skills` project roots to the configured user roots. This gives project definitions precedence without moving project-context rules into the catalog domain. Ordinary list and load operations reuse the snapshot, eliminating repeated tree scans. `skill_refresh` builds a complete replacement outside the publication lock and then swaps it atomically, so readers observe either the old or new revision. Resource paths are part of the catalog revision; resource bytes remain progressively loaded and carry an independent digest.
 
+Extension loading is an opt-in catalog-domain composition. For each requested base name, the
+catalog can independently resolve `<base-name>.extension` from the same immutable snapshot. The
+loader appends the complete extension after the base document and returns a digest of the combined
+content. It reports the applied extension name without merging resource namespaces. Callers access
+extension resources through the extension's own catalog name. Missing extensions are a no-op.
+
 The technology registry is parsed once per server process. A detection call computes owner evidence and manifest dependencies once per requested scope, then evaluates all configured skill predicates against that shared evidence.
 
 ## Reference-loading boundary

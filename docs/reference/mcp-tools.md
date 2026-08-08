@@ -86,19 +86,46 @@ Every matching scope contributes to the result. The server joins source contents
 
 ## Skills
 
-| Tool | Required arguments | Purpose |
+| Tool | Arguments | Purpose |
 |---|---|---|
 | `skill_list` | none | Return path-free names, descriptions, digests, resources, and shadowing counts. |
 | `skill_find` | `name` | Return the precedence-resolved absolute `SKILL.md` path for one catalog skill. |
-| `skill_read` | `name` | Return one complete path-free `SKILL.md` result. |
+| `skill_read` | `name`; optional `include_extensions` | Return one complete path-free skill, optionally with its resolved extension appended. |
 | `skill_read_resource` | `name`, `resource_path` | Read one safe supporting resource. |
-| `skill_load` | `names` | Load one to thirty-two complete skills in requested order with no host paths in the result. |
+| `skill_load` | `names`; optional `include_extensions` | Load one to thirty-two complete skills in requested order, optionally with extensions. |
 | `skill_resource_load` | `requests` | Load one to sixty-four supporting resources in requested order. |
 | `skill_refresh` | none | Build and atomically publish a new process-local skill catalog snapshot. |
 | `skill_validate` | `paths` | Validate catalog skill names or explicit absolute paths within configured skill roots or the authorized working project. |
 | `detect_technology_skills` | `project_root`, `scopes` | Run copied evidence-based technology detection using server configuration. |
 
 Except for the explicit `skill_find` result, model-facing catalog and skill-document results omit configured roots, manifest paths, and shadowed paths. `skill_load` and `skill_resource_load` are bounded, all-or-nothing operations: invalid, duplicate, missing, unsafe, or oversized requests return an error-only result rather than partial content. Every batch result includes `catalog_revision`; each loaded skill or resource also carries its own SHA-256 digest. A resource must be listed in the active catalog snapshot, so newly added resources require `skill_refresh`. Resource contents are read on demand and their returned digest identifies the exact bytes.
+
+### Optional skill extensions
+
+The `include_extensions` switch defaults to `false` on `skill_read` and `skill_load`. When the
+switch is `true`, the loader searches for `<base-name>.extension` as a normal catalog skill. The
+base name and extension name each use the complete project-before-user precedence order.
+Independent resolution supports all combinations of project and configured user definitions.
+
+If the extension exists, the loader appends its complete `SKILL.md` after the base document with
+one newline between them. The returned `digest` identifies this combined content, and
+`applied_extensions` contains the extension name. If the extension is absent, the base content and
+digest stay unchanged and `applied_extensions` is empty. Appended bytes count toward the existing
+one-mebibyte batch limit.
+
+Extension skills remain ordinary catalog entries. Their names must use the
+`<base-name>.extension` convention. Their supporting resources remain under the extension skill's
+own name and are available through `skill_read_resource` or `skill_resource_load`. The
+`skill://{name}` resource continues to return the exact named skill without optional composition.
+
+For example, these `skill_read` arguments enable extension lookup for `python`:
+
+```json
+{
+  "name": "python",
+  "include_extensions": true
+}
+```
 
 Skill roots come from `MCP_AGENT_OPS_SKILL_ROOTS`. Name-based validation uses the same precedence-resolved catalog as skill loading. An explicit absolute validation path may additionally resolve beneath the server's working project when that project is itself beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`. Every discovered manifest or metadata file must remain beneath the selected validation boundary. Technology detection additionally requires `MCP_AGENT_OPS_DETECTION_REGISTRY`; its project path and every discovered source, owner manifest, and owner-evidence file must remain beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`. Model-facing validation and detection results use relative identities rather than configured host paths. The parsed technology registry remains fixed until server restart.
 

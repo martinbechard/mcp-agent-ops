@@ -37,6 +37,9 @@
 - Catalog entries include stable names, descriptions, paths, content digests, and available supporting resources.
 - Manifest content and its digest remain paired in one immutable process-local snapshot.
 - A caller can load several complete skills or supporting resources in one ordered, bounded, all-or-nothing operation.
+- A caller can optionally append `<base-name>.extension` to each loaded base skill.
+- Base skills and their extensions resolve independently through the same project-before-user precedence.
+- A missing optional extension does not prevent the base skill from loading.
 - All model-facing catalog and skill-document results omit host filesystem paths.
 - An explicit refresh builds a replacement snapshot and publishes it atomically.
 - Duplicate skill names resolve by project-before-user root precedence and remain visible as shadowed entries; duplicate names within one recursive project root are rejected as ambiguous.

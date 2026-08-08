@@ -7,7 +7,7 @@ The service owns six capability groups:
 - repository claims, worktree isolation, event journaling, archival, and contention reporting;
 - reusable YAML and Markdown verification operations;
 - allowlisted reference-data aggregation across project and user scopes;
-- snapshot-based discovery and batched loading of installed Agent Skills;
+- snapshot-based discovery and extension-aware batched loading of installed Agent Skills;
 - Agent Skill validation; and
 - evidence-based technology-skill detection.
 
@@ -183,6 +183,11 @@ The server uses stdio by default. Configure these boundaries before exposing it 
 - `MCP_AGENT_OPS_WORKSPACE_ROOTS` contains allowed project and worktree roots, separated by the operating system path separator.
 
 When the server starts with its working directory beneath a configured workspace root, it automatically overlays recursively discovered skills from `<cwd>/.agents/skills` and `<cwd>/.codex/skills` ahead of the configured user roots. The `.agents` project root has precedence over the `.codex` project root. Nested project skill directories are supported; duplicate skill names inside either one project root are rejected as ambiguous. `skill_refresh` rescans both project and configured roots.
+
+`skill_read` and `skill_load` accept the optional `include_extensions` switch. Its default is
+`false`. When enabled for a base skill such as `python`, the loader searches the same precedence
+order for `python.extension` and appends that complete skill when found. The base and extension
+resolve independently, so either one can come from a project or configured user root.
 
 For each allowlisted reference name, the server checks `<cwd>/<name>` and then each configured reference root. It includes the working-directory file only when `<cwd>` is beneath an allowed workspace. The server aggregates every direct match in search order with one newline between sources. It does not search subdirectories or apply skill-style shadowing. `reference_refresh` rescans all reference scopes.
 

@@ -30,7 +30,7 @@ def test_validate_skills_returns_structured_findings(tmp_path: Path) -> None:
     assert result.ok is False
     assert {finding.message for finding in result.findings} >= {
         "unexpected frontmatter keys: unexpected",
-        "frontmatter name must use lowercase letters, digits, and hyphens",
+        "frontmatter name must use lowercase letters, digits, and hyphens with an optional .extension suffix",
         "frontmatter description must not contain angle brackets",
     }
 
@@ -40,6 +40,20 @@ def test_validate_skills_accepts_a_minimal_valid_skill(tmp_path: Path) -> None:
     skill.mkdir()
     (skill / "SKILL.md").write_text(
         "---\nname: valid-skill\ndescription: A valid skill.\n---\n\n# Valid Skill\n",
+        encoding="utf-8",
+    )
+
+    result = validate_skills([skill])
+
+    assert result.ok is True
+    assert result.findings == []
+
+
+def test_validate_skills_accepts_the_extension_naming_convention(tmp_path: Path) -> None:
+    skill = tmp_path / "valid-skill.extension"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text(
+        "---\nname: valid-skill.extension\ndescription: Project extension.\n---\n\n# Extension\n",
         encoding="utf-8",
     )
 

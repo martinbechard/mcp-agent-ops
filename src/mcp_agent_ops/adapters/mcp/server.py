@@ -697,9 +697,19 @@ def create_server(
         return catalog().find_skill(name)
 
     @mcp.tool
-    def skill_read(name: str) -> BatchLoadedSkill:
-        """Read one complete precedence-resolved skill without host filesystem paths."""
-        return catalog().read_model_skill(name)
+    def skill_read(name: str, include_extensions: bool = False) -> BatchLoadedSkill:
+        """Read one precedence-resolved skill and optionally append its extension.
+
+        Args:
+            name: Exact catalog name of the required base skill.
+            include_extensions: Search for `<name>.extension` through normal catalog
+                precedence and append it when present. Defaults to false.
+
+        Returns:
+            The base content, optional extension content, aggregate digest, base resources,
+            and names of applied extensions without host filesystem paths.
+        """
+        return catalog().read_model_skill(name, include_extensions=include_extensions)
 
     @mcp.tool
     def skill_read_resource(name: str, resource_path: str) -> LoadedSkillResource:
@@ -707,9 +717,22 @@ def create_server(
         return catalog().read_resource(name, resource_path)
 
     @mcp.tool
-    def skill_load(names: list[str]) -> SkillLoadResult:
-        """Load several complete skills in one ordered all-or-nothing operation."""
-        return catalog().load_skills(names)
+    def skill_load(
+        names: list[str],
+        include_extensions: bool = False,
+    ) -> SkillLoadResult:
+        """Load skills and optionally append independently resolved extensions.
+
+        Args:
+            names: One to thirty-two unique base skill names in required order.
+            include_extensions: Search for each `<name>.extension` through normal catalog
+                precedence and append available extensions. Defaults to false.
+
+        Returns:
+            An ordered all-or-nothing result. Missing optional extensions are not errors,
+            but required base skills and combined content limits remain enforced.
+        """
+        return catalog().load_skills(names, include_extensions=include_extensions)
 
     @mcp.tool
     def skill_resource_load(

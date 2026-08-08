@@ -77,11 +77,22 @@ def _write_skill(root: Path) -> None:
     (references / "guide.md").write_text("supporting guide\n", encoding="utf-8")
 
 
+def _write_skill_extension(root: Path) -> None:
+    extension = root / "example.extension"
+    extension.mkdir(parents=True)
+    (extension / "SKILL.md").write_text(
+        "---\nname: example.extension\ndescription: Example MCP extension.\n---\n\n"
+        "# Example Extension\n\nApply the extension.\n",
+        encoding="utf-8",
+    )
+
+
 async def test_server_publishes_small_named_tools_and_structured_results(tmp_path: Path) -> None:
     repository = tmp_path / "repository"
     skills = tmp_path / "skills"
     _initialize_repository(repository)
     _write_skill(skills)
+    _write_skill_extension(skills)
     server = create_server([skills], workspace_roots=[tmp_path])
 
     async with Client(server) as client:
@@ -175,6 +186,17 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
         assert set(claim_tools) == set(expected_claim_properties)
         for tool_name, expected_properties in expected_claim_properties.items():
             assert set(claim_tools[tool_name].inputSchema["properties"]) == expected_properties
+        skill_tools = {tool.name: tool for tool in tools if tool.name.startswith("skill_")}
+        assert set(skill_tools["skill_read"].inputSchema["properties"]) == {
+            "name",
+            "include_extensions",
+        }
+        assert set(skill_tools["skill_load"].inputSchema["properties"]) == {
+            "names",
+            "include_extensions",
+        }
+        assert "include_extensions" not in skill_tools["skill_read"].inputSchema.get("required", [])
+        assert "include_extensions" not in skill_tools["skill_load"].inputSchema.get("required", [])
         for tool in (claim_tools["claim_acquire"], claim_tools["claim_extend"]):
             properties = tool.inputSchema["properties"]
             assert properties["project_files"]["type"] == "boolean"
@@ -335,8 +357,20 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
         assert "root" not in catalog.structured_content["skills"][0]
         loaded = await client.call_tool("skill_read", {"name": "example"})
         assert loaded.structured_content["content"].endswith("Use it.\n")
+        assert loaded.structured_content["applied_extensions"] == []
         assert "entry" not in loaded.structured_content
         assert "path" not in loaded.structured_content
+        extended = await client.call_tool(
+            "skill_read",
+            {"name": "example", "include_extensions": True},
+        )
+        assert extended.structured_content["content"].endswith("Apply the extension.\n")
+        assert extended.structured_content["applied_extensions"] == ["example.extension"]
+        batch_extended = await client.call_tool(
+            "skill_load",
+            {"names": ["example"], "include_extensions": True},
+        )
+        assert batch_extended.structured_content["skills"] == [extended.structured_content]
         resource = await client.call_tool(
             "skill_read_resource",
             {"name": "example", "resource_path": "references/guide.md"},
@@ -535,6 +569,7 @@ async def test_server_overlays_nested_project_skills_from_working_directory(
         encoding="utf-8",
     )
     _write_skill(user_skills)
+    _write_skill_extension(user_skills)
     monkeypatch.chdir(project)
     server = create_server(
         [user_skills],
@@ -545,6 +580,10 @@ async def test_server_overlays_nested_project_skills_from_working_directory(
         catalog = await client.call_tool("skill_list", {})
         found = await client.call_tool("skill_find", {"name": "example"})
         loaded = await client.call_tool("skill_read", {"name": "example"})
+        extended = await client.call_tool(
+            "skill_read",
+            {"name": "example", "include_extensions": True},
+        )
         validation = await client.call_tool("skill_validate", {"paths": ["example"]})
 
     assert catalog.structured_content["skills"][0]["description"] == "Project example skill."
@@ -554,6 +593,9 @@ async def test_server_overlays_nested_project_skills_from_working_directory(
         "path": str((project_skill / "SKILL.md").resolve()),
     }
     assert loaded.structured_content["content"].endswith("# Project\n")
+    assert "# Project\n" in extended.structured_content["content"]
+    assert extended.structured_content["content"].endswith("Apply the extension.\n")
+    assert extended.structured_content["applied_extensions"] == ["example.extension"]
     assert validation.structured_content == {"ok": True, "findings": []}
 
 

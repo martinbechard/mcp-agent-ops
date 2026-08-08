@@ -29,7 +29,7 @@ ALLOWED_FRONTMATTER_KEYS = {
     "metadata",
     "name",
 }
-NAME_PATTERN = re.compile(r"^[a-z0-9-]+$")
+NAME_PATTERN = re.compile(r"^[a-z0-9-]+(?:\.extension)?$")
 SUCCESS_EXIT_CODE = 0
 ERROR_EXIT_CODE = 1
 OPENAI_METADATA_TOP_LEVEL_KEYS = {"dependencies", "interface", "policy"}
@@ -138,8 +138,14 @@ def validate_skill_file(
     else:
         normalized_name = name.strip()
         if not NAME_PATTERN.fullmatch(normalized_name):
-            findings.append(SkillFinding(skill_file, "frontmatter name must use lowercase letters, digits, and hyphens"))
-        if normalized_name.startswith("-") or normalized_name.endswith("-") or "--" in normalized_name:
+            findings.append(
+                SkillFinding(
+                    skill_file,
+                    "frontmatter name must use lowercase letters, digits, and hyphens with an optional .extension suffix",
+                )
+            )
+        base_name = normalized_name.removesuffix(".extension")
+        if base_name.startswith("-") or base_name.endswith("-") or "--" in base_name:
             findings.append(SkillFinding(skill_file, "frontmatter name must not start or end with a hyphen or contain repeated hyphens"))
         if len(normalized_name) > MAX_SKILL_NAME_LENGTH:
             findings.append(SkillFinding(skill_file, f"frontmatter name must be at most {MAX_SKILL_NAME_LENGTH} characters"))

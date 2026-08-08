@@ -4,6 +4,7 @@
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -159,6 +160,91 @@ def test_batch_load_is_ordered_path_free_and_all_or_nothing(tmp_path: Path) -> N
     assert duplicate.ok is False
     assert duplicate.skills == []
     assert duplicate.errors[0].code == "duplicate_skill"
+
+
+def test_catalog_optionally_appends_extension_resolved_from_another_root(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    shared = tmp_path / "shared"
+    write_skill(project, "example", "example", "Project skill.", "# Base\n\nProject rules.\n")
+    write_skill(
+        shared,
+        "example.extension",
+        "example.extension",
+        "Shared extension.",
+        "# Extension\n\nShared rules.\n",
+    )
+    catalog = SkillCatalog.from_roots([project, shared])
+
+    base = catalog.read_model_skill("example")
+    extended = catalog.read_model_skill("example", include_extensions=True)
+    batched = catalog.load_skills(["example"], include_extensions=True)
+
+    extension_content = catalog.read_skill("example.extension").content
+    expected_content = f"{base.content}\n{extension_content}"
+    assert extended.content == expected_content
+    assert extended.digest == hashlib.sha256(expected_content.encode("utf-8")).hexdigest()
+    assert extended.applied_extensions == ["example.extension"]
+    assert batched.ok is True
+    assert batched.skills == [extended]
+    assert base.applied_extensions == []
+    assert "Shared rules." not in base.content
+
+
+def test_extension_lookup_uses_its_own_precedence_and_missing_is_a_noop(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    shared = tmp_path / "shared"
+    write_skill(
+        project,
+        "example.extension",
+        "example.extension",
+        "Project extension.",
+        "# Project Extension\n",
+    )
+    write_skill(shared, "example", "example", "Shared skill.", "# Shared Base\n")
+    write_skill(
+        shared,
+        "example.extension",
+        "example.extension",
+        "Shared extension.",
+        "# Shared Extension\n",
+    )
+    write_skill(shared, "plain", "plain", "Plain skill.", "# Plain\n")
+    catalog = SkillCatalog.from_roots([project, shared])
+
+    mixed = catalog.read_model_skill("example", include_extensions=True)
+    plain = catalog.read_model_skill("plain")
+    plain_with_search = catalog.read_model_skill("plain", include_extensions=True)
+
+    assert "# Shared Base" in mixed.content
+    assert "# Project Extension" in mixed.content
+    assert "# Shared Extension" not in mixed.content
+    assert mixed.applied_extensions == ["example.extension"]
+    assert plain_with_search == plain
+
+
+def test_batch_content_limit_includes_appended_extension_bytes(tmp_path: Path) -> None:
+    root = tmp_path / "skills"
+    write_skill(root, "example", "example", "Example skill.", "# Base\n")
+    write_skill(
+        root,
+        "example.extension",
+        "example.extension",
+        "Large extension.",
+        "x" * (1024 * 1024),
+    )
+    catalog = SkillCatalog.from_roots([root])
+
+    base_only = catalog.load_skills(["example"])
+    extended = catalog.load_skills(["example"], include_extensions=True)
+
+    assert base_only.ok is True
+    assert extended.ok is False
+    assert extended.skills == []
+    assert extended.errors[0].code == "content_limit_exceeded"
 
 
 def test_batch_resource_load_preserves_order_and_never_returns_partial_content(tmp_path: Path) -> None:

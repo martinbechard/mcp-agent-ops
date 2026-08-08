@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Defines structured skill catalog, complete skill, and supporting resource results.
+# Summary: Defines structured skill catalog, extension-aware skill, and supporting resource results.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
@@ -79,12 +79,18 @@ class LoadedSkillResource(BaseModel):
 
 
 class BatchLoadedSkill(BaseModel):
-    """Return one model-facing skill document without exposing host filesystem paths."""
+    """Return one model-facing skill document without exposing host filesystem paths.
+
+    `digest` identifies the exact returned `content`. When extension lookup is enabled,
+    `applied_extensions` names each precedence-resolved extension appended to that content.
+    Supporting resources remain owned and addressable by their individual catalog skill.
+    """
 
     name: str
     digest: str
     content: str
     resources: list[str] = Field(default_factory=list)
+    applied_extensions: list[str] = Field(default_factory=list)
 
 
 class SkillLoadError(BaseModel):

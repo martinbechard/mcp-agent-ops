@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Discovers precedence-ordered and selected recursive skill roots with safe content access.
+# Summary: Discovers precedence-ordered skills and safely composes optional extension instructions.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
@@ -36,6 +36,7 @@ _MAX_BATCH_SKILLS = 32
 _MAX_BATCH_CONTENT_BYTES = 1024 * 1024
 _MAX_BATCH_RESOURCES = 64
 _MAX_BATCH_RESOURCE_BYTES = 2 * 1024 * 1024
+_EXTENSION_SUFFIX = ".extension"
 
 
 class SkillNotFoundError(KeyError):
@@ -268,21 +269,55 @@ class SkillCatalog:
         entry = self.get(name)
         return LoadedSkill(entry=entry, content=self._contents[name])
 
-    def read_model_skill(self, name: str) -> BatchLoadedSkill:
-        """Return one complete selected skill without host filesystem paths."""
+    def read_model_skill(
+        self,
+        name: str,
+        include_extensions: bool = False,
+    ) -> BatchLoadedSkill:
+        """Return one selected skill with an optional independently resolved extension.
+
+        Args:
+            name: Exact catalog name of the required base skill.
+            include_extensions: Search the same catalog snapshot for `<name>.extension`
+                and append its complete manifest when present. Defaults to false.
+
+        Returns:
+            A path-free skill whose digest identifies the exact returned content. The base
+            skill's resources remain in `resources`; applied extension names identify any
+            separately addressable extension resources.
+
+        Raises:
+            SkillNotFoundError: If the required base skill is absent. A missing optional
+                extension does not fail the read.
+        """
         entry = self.get(name)
+        content = self._contents[name]
+        applied_extensions: list[str] = []
+        if include_extensions and not name.endswith(_EXTENSION_SUFFIX):
+            extension_name = f"{name}{_EXTENSION_SUFFIX}"
+            extension_content = self._contents.get(extension_name)
+            if extension_content is not None:
+                content = f"{content}\n{extension_content}"
+                applied_extensions.append(extension_name)
         return BatchLoadedSkill(
             name=name,
-            digest=entry.digest,
-            content=self._contents[name],
+            digest=entry.digest if not applied_extensions else _digest(content.encode("utf-8")),
+            content=content,
             resources=list(entry.resources),
+            applied_extensions=applied_extensions,
         )
 
-    def load_skills(self, names: list[str]) -> SkillLoadResult:
+    def load_skills(
+        self,
+        names: list[str],
+        include_extensions: bool = False,
+    ) -> SkillLoadResult:
         """Load a bounded ordered set of complete skills without returning partial content.
 
         Args:
             names: One to thirty-two unique resolved skill names in caller-required order.
+            include_extensions: Append each available `<name>.extension` selected through
+                normal catalog precedence. Missing extensions do not fail the batch.
 
         Returns:
             Complete model-facing documents when every name is valid and the response stays
@@ -309,7 +344,11 @@ class SkillCatalog:
                 "Every requested skill must exist in the configured catalog.",
                 missing[0],
             )
-        content_bytes = sum(len(self._contents[name].encode("utf-8")) for name in names)
+        loaded_skills = [
+            self.read_model_skill(name, include_extensions=include_extensions)
+            for name in names
+        ]
+        content_bytes = sum(len(skill.content.encode("utf-8")) for skill in loaded_skills)
         if content_bytes > _MAX_BATCH_CONTENT_BYTES:
             return self._load_error(
                 "content_limit_exceeded",
@@ -318,10 +357,7 @@ class SkillCatalog:
         return SkillLoadResult(
             ok=True,
             catalog_revision=self._revision,
-            skills=[
-                self.read_model_skill(name)
-                for name in names
-            ],
+            skills=loaded_skills,
         )
 
     def _load_error(self, code: str, message: str, name: str | None = None) -> SkillLoadResult:
