@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Renders JSON/YAML data as safe, themed HTML trees with optional numbering and tracking controls.
+# Summary: Renders JSON/YAML data as safe, themed HTML trees with numbering and report markers.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
@@ -194,12 +194,17 @@ def _number_text(number_path: tuple[int, ...]) -> str:
     return ".".join(str(part) for part in number_path)
 
 
-def _checkbox_html(label: str | None, number_path: tuple[int, ...], *, numbering: bool) -> str:
+def _completion_marker_html(
+    label: str | None,
+    number_path: tuple[int, ...],
+    *,
+    numbering: bool,
+) -> str:
     marker = _number_text(number_path) if numbering else label
     safe_marker = escape(marker or "item", quote=True)
     return (
-        '<input class="tree-checkbox" type="checkbox" '
-        f'aria-label="Mark {safe_marker} complete">'
+        '<span class="tree-checkbox" role="img" '
+        f'aria-label="{safe_marker} incomplete"></span>'
     )
 
 
@@ -213,7 +218,11 @@ def _render_node(
     checkboxes: bool,
 ) -> str:
     safe_label = escape(label, quote=True) if label is not None else None
-    checkbox = _checkbox_html(label, number_path, numbering=numbering) if checkboxes and number_path else ""
+    completion_marker = (
+        _completion_marker_html(label, number_path, numbering=numbering)
+        if checkboxes and number_path
+        else ""
+    )
     number = (
         f'<span class="tree-number">{_number_text(number_path)}</span>' if numbering and number_path else ""
     )
@@ -225,15 +234,13 @@ def _render_node(
         return (
             '<li class="tree-node tree-leaf" role="treeitem">'
             '<div class="node-line">'
-            f"{checkbox}{number}{key}{separator}"
+            f"{completion_marker}{number}{key}{separator}"
             f'<span class="tree-value type-{kind}">{safe_value}</span>'
             "</div></li>"
         )
 
     entries = _branch_entries(value, numbering=numbering)
     node_id = f"hierarchy-node-{next(identifiers)}"
-    branch_kind = "object" if isinstance(value, Mapping) else "array"
-    item_label = "item" if len(entries) == 1 else "items"
     children = "".join(
         _render_node(
             child_label,
@@ -248,12 +255,11 @@ def _render_node(
     return (
         '<li class="tree-node tree-branch" role="treeitem">'
         '<div class="node-line">'
-        f"{checkbox}"
+        f"{completion_marker}"
         f'<button type="button" class="tree-toggle" data-depth="{len(number_path)}" '
         f'aria-expanded="true" aria-controls="{node_id}">'
         '<span class="tree-chevron" aria-hidden="true"></span>'
         f"{number}{key}"
-        f'<span class="tree-meta">{branch_kind} · {len(entries)} {item_label}</span>'
         "</button></div>"
         f'<ul class="tree-children" id="{node_id}" role="group">{children}</ul>'
         "</li>"
@@ -318,7 +324,6 @@ def _render_document(
         )
     safe_title = escape(title, quote=True)
     safe_theme = escape(theme, quote=True)
-    item_label = "item" if len(entries) == 1 else "items"
     return f"""<!doctype html>
 <html lang="en" data-theme="{safe_theme}">
 <head>
@@ -334,7 +339,6 @@ def _render_document(
     <header class="document-header">
       <div>
         <h1>{safe_title}</h1>
-        <p class="document-summary">{len(entries)} top-level {item_label}</p>
       </div>
       <div class="tree-controls">
         <div class="tree-actions" aria-label="Tree controls">
@@ -433,11 +437,10 @@ def render_hierarchy_html(
             as `1.2.3`. A singleton root mapping whose value is another branch remains
             visible as an unnumbered structural label; its children begin at `1`.
             Synthetic sequence labels such as `[0]` are hidden when numbering is enabled.
-        checkboxes: Whether to place an interactive, initially unchecked tracking
-            checkbox before each trackable node's number or label. An unnumbered
-            singleton root wrapper is structural and receives no checkbox. Checkbox
-            state lasts only for the current page session and is not written back to
-            the source data.
+        checkboxes: Whether to place a static incomplete marker before each trackable
+            node's number or label. An unnumbered singleton root wrapper is structural
+            and receives no marker. The marker is read-only and does not change or write
+            back to the source data.
         output_filename: Optional base filename. When supplied, the HTML is written and
             the resolved output `Path` is returned; otherwise the complete HTML is returned.
         output_folder: Optional destination folder, created when needed. It is valid only

@@ -3,12 +3,14 @@
 This gallery demonstrates four source and presentation combinations:
 
 - `delivery-plan.yaml` uses document-style labels and a transparent singleton wrapper. Its plan
-  entries use dotted numbering, tracking checkboxes, and the packaged `default` theme. The gallery
-  generator marks items `1` and `2` as checked so the example shows completed and open items.
+  entries use dotted numbering, read-only completion markers, and the packaged `default` theme.
+  The gallery generator marks items `1` and `2` as complete so the example shows completed and
+  open items.
 - [`document-outline.md`](data/document-outline.md) provides a reviewable heading outline. Its
   headings and leaf text form the in-memory hierarchy that the renderer displays with dotted
-  numbering, no checkboxes, and the packaged `midnight` theme.
-- `incident-review.json` is read as full JSON content and rendered with the packaged `outline` theme.
+  numbering, no completion markers, and the calm, paper-like packaged `outline` theme.
+- `incident-review.json` is read as full JSON content and rendered with the packaged `midnight`
+  theme.
 - an in-memory Python mapping is rendered with the caller-supplied `blueprint` theme from
   [`themes/blueprint.css`](themes/blueprint.css). Its graph-paper background, drafting colors,
   square controls, and technical typography make the custom styling intentionally non-stock.
@@ -19,8 +21,8 @@ a caller-supplied theme is used. The callout deliberately excludes source data a
 
 Markdown parsing belongs only to this example generator. The public renderer accepts structured
 Python data, JSON/YAML content, and JSON/YAML files; it does not accept Markdown directly.
-The initial checked state also belongs only to the gallery generator. The public renderer continues
-to create unchecked boxes and does not infer completion from source values.
+The initial completion state also belongs only to the gallery generator. The public renderer
+creates incomplete markers and does not infer completion from source values.
 
 For the complete API and behavior contract, see the
 [hierarchical HTML renderer reference](../../docs/reference/hierarchy-html-renderer.md).

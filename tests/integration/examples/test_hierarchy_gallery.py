@@ -26,11 +26,11 @@ def test_gallery_generator_builds_index_and_interactive_examples(tmp_path: Path)
     assert str((tmp_path / "index.html").resolve()) in completed.stdout
     pages = {
         "delivery-plan.html": ("Delivery Plan", "default", "Release the customer portal refresh"),
-        "incident-review.html": ("Incident Review", "outline", "A retry policy amplified"),
+        "incident-review.html": ("Incident Review", "midnight", "A retry policy amplified"),
         "agent-workflow.html": ("Agent Workflow", "blueprint", "bounded execution scope"),
         "document-outline.html": (
             "Document Outline",
-            "midnight",
+            "outline",
             "Define the capabilities that the document covers.",
         ),
     }
@@ -42,6 +42,9 @@ def test_gallery_generator_builds_index_and_interactive_examples(tmp_path: Path)
         assert example_value in content
         assert 'class="tree-toggle"' in content
         assert "Expand all" in content
+        assert "top-level item" not in content
+        assert "object ·" not in content
+        assert "array ·" not in content
 
     index = (tmp_path / "index.html").read_text(encoding="utf-8")
     assert index.count("<iframe") == 4
@@ -66,21 +69,16 @@ def test_gallery_generator_builds_index_and_interactive_examples(tmp_path: Path)
 
     delivery_plan = (tmp_path / "delivery-plan.html").read_text(encoding="utf-8")
     assert '<span class="tree-number">5.1</span>' in delivery_plan
-    assert 'aria-label="Mark 5.1 complete"' in delivery_plan
+    assert 'aria-label="5.1 incomplete"' in delivery_plan
     assert '<span class="tree-number">1</span><span class="tree-key">Objective</span>' in delivery_plan
     assert 'class="tree-toggle" data-depth="0"' in delivery_plan
-    assert 'aria-label="Mark item complete"' not in delivery_plan
+    assert 'aria-label="item incomplete"' not in delivery_plan
     assert 'class="tree-checkbox"' in delivery_plan
-    assert delivery_plan.count('class="tree-checkbox" type="checkbox" checked') == 2
+    assert 'type="checkbox"' not in delivery_plan
+    assert delivery_plan.count('class="tree-checkbox is-checked"') == 2
     for number in ("1", "2"):
-        assert (
-            '<input class="tree-checkbox" type="checkbox" checked '
-            f'aria-label="Mark {number} complete">'
-        ) in delivery_plan
-    assert (
-        '<input class="tree-checkbox" type="checkbox" aria-label="Mark 3 complete">'
-        in delivery_plan
-    )
+        assert f'role="img" aria-label="{number} complete"' in delivery_plan
+    assert 'class="tree-checkbox" role="img" aria-label="3 incomplete"' in delivery_plan
     assert 'data-level="1"' in delivery_plan
     assert 'data-level="2"' in delivery_plan
     assert 'data-level="3"' in delivery_plan
@@ -101,4 +99,6 @@ def test_gallery_generator_builds_index_and_interactive_examples(tmp_path: Path)
     assert '<span class="tree-number">2.1</span>' in document_outline
     assert "Product Requirements Document" in document_outline
     assert 'class="tree-checkbox"' not in document_outline
+    assert "--background: #ffffff" in document_outline
+    assert ".tree-leaf > .node-line" in document_outline
     assert "[0]" not in document_outline

@@ -1,27 +1,46 @@
 /*
  * Copyright (c) 2026 Martin.Bechard@DevConsult.ca
  * AI attribution: Generated with AI assistance.
- * Summary: Provides a high-contrast violet theme for plans and structured outlines.
+ * Summary: Provides a calm paper theme with natural prose flow for structured outlines.
  * Design: docs/design/high-level/architecture.md
  * Test plan: docs/reference/test-plan.md
  */
 
 :root {
   color-scheme: light;
-  --background: #f7f5fb;
-  --surface: #fffefe;
-  --control: #faf8ff;
-  --hover: #f1ebff;
-  --text: #302a3a;
-  --heading: #241a31;
-  --muted: #746a82;
-  --key: #4c2a72;
-  --string: #23705a;
-  --number: #a04b22;
-  --boolean: #7251a5;
-  --accent: #8250df;
-  --branch: #cfc1e8;
-  --border: #ded5eb;
-  --border-strong: #c4b2df;
-  --shadow: 0 18px 48px rgb(61 38 87 / 10%);
+  --background: #ffffff;
+  --surface: #ffffff;
+  --control: #f7f9fb;
+  --hover: #f1f5f8;
+  --text: #344054;
+  --heading: #1f2937;
+  --muted: #667085;
+  --key: #26364a;
+  --string: #475467;
+  --number: #315b7d;
+  --boolean: #6b5a7d;
+  --accent: #3f6b8f;
+  --branch: #d8e0e8;
+  --border: #e4e9ef;
+  --border-strong: #cfd8e3;
+  --shadow: 0 12px 36px rgb(31 41 55 / 6%);
+}
+
+h1,
+.hierarchy-tree {
+  font-family: Charter, "Iowan Old Style", Georgia, serif;
+}
+
+.tree-leaf > .node-line {
+  display: block;
+  line-height: 1.7;
+}
+
+.tree-leaf .tree-number {
+  display: inline-block;
+  margin-right: 0.5rem;
+}
+
+.tree-leaf .tree-value {
+  padding-left: 0.25rem;
 }

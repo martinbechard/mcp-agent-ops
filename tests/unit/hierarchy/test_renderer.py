@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Verifies safe self-contained HTML trees, numbering, tracking controls, inputs, and themes.
+# Summary: Verifies safe self-contained HTML trees, numbering, report markers, inputs, and themes.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
@@ -36,6 +36,9 @@ def test_renders_nested_mappings_and_sequences_as_an_interactive_tree() -> None:
     assert "Expand all" in rendered
     assert "Collapse all" in rendered
     assert 'root.addEventListener("click"' in rendered
+    assert "top-level item" not in rendered
+    assert "object ·" not in rendered
+    assert "array ·" not in rendered
 
 
 def test_renders_progressive_level_controls_and_branch_depth_metadata() -> None:
@@ -51,7 +54,7 @@ def test_renders_progressive_level_controls_and_branch_depth_metadata() -> None:
     assert "depth < visibleLevel" in rendered
 
 
-def test_optionally_renders_dotted_hierarchical_numbers_and_tracking_checkboxes() -> None:
+def test_optionally_renders_dotted_numbers_and_read_only_completion_markers() -> None:
     rendered = render_hierarchy_html(
         {"Plan": {"phases": [{"tasks": ["Write", "Review"]}]}},
         numbering=True,
@@ -60,8 +63,12 @@ def test_optionally_renders_dotted_hierarchical_numbers_and_tracking_checkboxes(
 
     for number in ("1", "1.1", "1.1.1", "1.1.1.1", "1.1.1.2"):
         assert f'<span class="tree-number">{number}</span>' in rendered
-        assert f'aria-label="Mark {number} complete"' in rendered
+        assert f'aria-label="{number} incomplete"' in rendered
     assert rendered.count('class="tree-checkbox"') == 5
+    assert rendered.count('role="img"') == 5
+    assert 'type="checkbox"' not in rendered
+    assert "disabled" not in rendered
+    assert "border: 1.5px solid var(--muted)" in rendered
     assert "[0]" not in rendered
     assert rendered.index('class="tree-checkbox"') < rendered.index('<span class="tree-number">1</span>')
 
@@ -80,7 +87,7 @@ def test_singleton_root_branch_is_transparent_to_numbering_and_tracking() -> Non
 
     assert 'class="tree-toggle" data-depth="0"' in rendered
     assert '<span class="tree-key">Delivery plan</span>' in rendered
-    assert 'aria-label="Mark item complete"' not in rendered
+    assert 'aria-label="item incomplete"' not in rendered
     assert '<span class="tree-number">1</span><span class="tree-key">Objective</span>' in rendered
     assert '<span class="tree-number">2</span><span class="tree-key">Milestones</span>' in rendered
     assert '<span class="tree-number">2.1</span><span class="tree-key">Discovery</span>' in rendered
@@ -91,7 +98,7 @@ def test_singleton_scalar_root_remains_numbered_and_trackable() -> None:
     rendered = render_hierarchy_html({"Status": "Ready"}, numbering=True, checkboxes=True)
 
     assert '<span class="tree-number">1</span><span class="tree-key">Status</span>' in rendered
-    assert 'aria-label="Mark 1 complete"' in rendered
+    assert 'aria-label="1 incomplete"' in rendered
 
 
 def test_escapes_titles_keys_and_values_before_inserting_them_into_html() -> None:
@@ -153,7 +160,8 @@ def test_loads_builtin_and_caller_supplied_theme_files(tmp_path: Path) -> None:
     )
 
     assert 'data-theme="outline"' in outlined
-    assert "--accent: #8250df" in outlined
+    assert "--background: #ffffff" in outlined
+    assert ".tree-leaf > .node-line" in outlined
     assert 'data-theme="midnight"' in midnight
     assert "--background: #080d18" in midnight
     assert 'data-theme="solarized"' in custom

@@ -53,12 +53,6 @@ h1 {
   letter-spacing: -0.025em;
 }
 
-.document-summary {
-  margin: 0.25rem 0 0;
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-
 .tree-controls {
   display: grid;
   justify-items: end;
@@ -178,17 +172,29 @@ h1 {
 }
 
 .tree-checkbox {
+  display: inline-grid;
+  place-items: center;
   width: 1.05rem;
   height: 1.05rem;
   flex: 0 0 auto;
   margin: 0 0.1rem 0 0.2rem;
-  accent-color: var(--accent);
-  cursor: pointer;
+  color: var(--surface);
+  border: 1.5px solid var(--muted);
+  border-radius: 3px;
+  background: var(--surface);
+  pointer-events: none;
 }
 
-.tree-checkbox:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.tree-checkbox.is-checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.tree-checkbox.is-checked::after {
+  content: "✓";
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .tree-number {
@@ -204,14 +210,8 @@ h1 {
   overflow-wrap: anywhere;
 }
 
-.tree-separator,
-.tree-meta {
+.tree-separator {
   color: var(--muted);
-}
-
-.tree-meta {
-  font-size: 0.78rem;
-  font-weight: 500;
 }
 
 .tree-value {

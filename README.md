@@ -154,7 +154,7 @@ html = render_hierarchy_html(plan, title="Delivery plan")
 ```
 
 See the [complete hierarchical HTML renderer reference](docs/reference/hierarchy-html-renderer.md)
-for inputs, parameters, numbering, transient checkboxes, progressive level controls, themes,
+for inputs, parameters, numbering, read-only completion markers, progressive level controls, themes,
 output behavior, validation, errors, regeneration guidance, and implementation links.
 
 A runnable [hierarchy gallery](examples/hierarchy-gallery/README.md) includes structured examples

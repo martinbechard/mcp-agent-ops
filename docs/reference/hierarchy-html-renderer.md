@@ -84,7 +84,7 @@ render_hierarchy_html(
 | `theme` | Simple base name | Selects `<theme>.css`. Packaged choices are `default`, `outline`, and `midnight`. Default: `default`. |
 | `themes_folder` | `str`, `Path`, or `None` | Selects a caller-owned theme folder. Packaged themes are used when omitted. |
 | `numbering` | `bool` | Adds one-based dotted numbers such as `1`, `1.2`, and `1.2.1`. A singleton branch root is an unnumbered wrapper. Default: `False`. |
-| `checkboxes` | `bool` | Adds an initially unchecked tracking checkbox to each trackable node. A transparent singleton wrapper is not trackable. Default: `False`. |
+| `checkboxes` | `bool` | Adds a static, initially incomplete marker to each trackable node. A transparent singleton wrapper is not trackable. Default: `False`. |
 | `output_filename` | Base filename or `None` | Writes the document when supplied. A directory component is not accepted. |
 | `output_folder` | `str`, `Path`, or `None` | Selects or creates the destination folder. Requires `output_filename` and defaults to the current directory. |
 
@@ -201,7 +201,7 @@ When the root mapping contains one item and that item's value is another mapping
 renderer treats the first item as a structural wrapper:
 
 - The wrapper label remains visible.
-- The wrapper has no number or checkbox.
+- The wrapper has no number or completion marker.
 - The wrapper's children begin at `1`, `2`, and so on.
 
 For example, a `Delivery plan` wrapper can contain `1 Objective`, `2 Owner`, and `5 Milestones`.
@@ -210,26 +210,27 @@ Nested milestone items continue as `5.1`, `5.2`, and `5.3`.
 Sequence labels such as `[0]` are omitted in numbered output. Mapping keys remain visible beside
 their numbers.
 
-## Tracking checkboxes and persistence
+## Read-only completion markers
 
-`checkboxes=True` places a native checkbox before each trackable node. An unnumbered singleton
-wrapper is structural and does not receive a checkbox. Each checkbox is intentionally simple:
+`checkboxes=True` places a static visual marker before each trackable node. An unnumbered singleton
+wrapper is structural and does not receive a marker. Each marker is intentionally read-only:
 
-- it starts unchecked on each page load;
-- its state exists only in the current browser DOM;
+- it starts incomplete on each page load;
+- it is not a form control and cannot receive focus or be toggled;
 - it has no save, storage, or source-update handler;
 - it does not modify JSON, YAML, Python data, or the generated HTML file.
 
 The public API currently renders documents only; it does not provide an update function. For
 durable machine-managed progress, keep JSON or YAML as the source of truth, update that source, and
-regenerate the HTML. Do not treat browser checkbox state as authoritative progress data.
+regenerate the HTML. The gallery generator demonstrates completed markers as example-only
+presentation state.
 
 ## Themes
 
 Packaged themes are:
 
 - `default`: a neutral blue light theme;
-- `outline`: a higher-contrast violet light theme;
+- `outline`: a calm white theme with document-oriented typography;
 - `midnight`: a dark navy theme with blue, green, amber, and violet syntax colors.
 
 Select a packaged theme by base name. No theme folder is required:
@@ -325,10 +326,10 @@ work.
 
 The checked-in [hierarchy gallery](../../examples/hierarchy-gallery/README.md) demonstrates:
 
-- a YAML filename with dotted numbering and tracking checkboxes;
+- a YAML filename with dotted numbering and read-only completion markers;
 - a reviewable [Markdown document outline](../../examples/hierarchy-gallery/data/document-outline.md)
-  converted to structured data by the gallery generator;
-- full JSON content with the packaged `outline` theme;
+  converted to structured data and rendered with the packaged `outline` theme;
+- full JSON content with the packaged `midnight` theme;
 - in-memory Python data with the caller-supplied `blueprint` theme;
 - generated callouts that identify each example's presentation parameters without exposing its
   source-data parameters.

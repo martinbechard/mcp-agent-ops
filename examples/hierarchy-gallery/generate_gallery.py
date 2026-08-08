@@ -29,7 +29,7 @@ class _Demo:
     themes_folder: Path | None = None
     numbering: bool = False
     checkboxes: bool = False
-    initially_checked: tuple[str, ...] = ()
+    initially_complete: tuple[str, ...] = ()
 
 
 @dataclass
@@ -123,25 +123,25 @@ def _demos() -> list[_Demo]:
             theme="default",
             numbering=True,
             checkboxes=True,
-            initially_checked=("1", "2"),
+            initially_complete=("1", "2"),
         ),
         _Demo(
             slug="document-outline",
             title="Document Outline",
             description=(
                 "Reviewable Markdown headings rendered with numbering, no checkboxes, "
-                "and the packaged midnight theme."
+                "and the paper-like packaged outline theme."
             ),
             source=_load_markdown_outline(_GALLERY_ROOT / "data" / "document-outline.md"),
-            theme="midnight",
+            theme="outline",
             numbering=True,
         ),
         _Demo(
             slug="incident-review",
             title="Incident Review",
-            description="Full JSON content with the packaged outline theme.",
+            description="Full JSON content with the packaged midnight theme.",
             source=(_GALLERY_ROOT / "data" / "incident-review.json").read_text(encoding="utf-8"),
-            theme="outline",
+            theme="midnight",
         ),
         _Demo(
             slug="agent-workflow",
@@ -166,21 +166,21 @@ def _presentation_parameters(demo: _Demo) -> str:
     return "\n".join(parameters)
 
 
-def _apply_initial_checks(path: Path, markers: tuple[str, ...]) -> None:
+def _apply_initial_completion(path: Path, markers: tuple[str, ...]) -> None:
     html = path.read_text(encoding="utf-8")
     for marker in markers:
         safe_marker = escape(marker, quote=True)
-        unchecked = (
-            '<input class="tree-checkbox" type="checkbox" '
-            f'aria-label="Mark {safe_marker} complete">'
+        incomplete = (
+            '<span class="tree-checkbox" role="img" '
+            f'aria-label="{safe_marker} incomplete"></span>'
         )
-        if html.count(unchecked) != 1:
-            raise ValueError(f"Initial checkbox marker must identify one generated item: {marker}")
-        checked = (
-            '<input class="tree-checkbox" type="checkbox" checked '
-            f'aria-label="Mark {safe_marker} complete">'
+        if html.count(incomplete) != 1:
+            raise ValueError(f"Initial completion marker must identify one generated item: {marker}")
+        complete = (
+            '<span class="tree-checkbox is-checked" role="img" '
+            f'aria-label="{safe_marker} complete"></span>'
         )
-        html = html.replace(unchecked, checked, 1)
+        html = html.replace(incomplete, complete, 1)
     path.write_text(html, encoding="utf-8")
 
 
@@ -273,7 +273,7 @@ def _build_gallery(output_folder: Path) -> Path:
             output_filename=f"{demo.slug}.html",
             output_folder=output_folder,
         )
-        _apply_initial_checks(output_path, demo.initially_checked)
+        _apply_initial_completion(output_path, demo.initially_complete)
     index_path = output_folder / "index.html"
     index_path.write_text(_gallery_index(demos), encoding="utf-8")
     return index_path.resolve()
