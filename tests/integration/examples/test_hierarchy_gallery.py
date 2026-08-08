@@ -71,6 +71,16 @@ def test_gallery_generator_builds_index_and_interactive_examples(tmp_path: Path)
     assert 'class="tree-toggle" data-depth="0"' in delivery_plan
     assert 'aria-label="Mark item complete"' not in delivery_plan
     assert 'class="tree-checkbox"' in delivery_plan
+    assert delivery_plan.count('class="tree-checkbox" type="checkbox" checked') == 2
+    for number in ("1", "2"):
+        assert (
+            '<input class="tree-checkbox" type="checkbox" checked '
+            f'aria-label="Mark {number} complete">'
+        ) in delivery_plan
+    assert (
+        '<input class="tree-checkbox" type="checkbox" aria-label="Mark 3 complete">'
+        in delivery_plan
+    )
     assert 'data-level="1"' in delivery_plan
     assert 'data-level="2"' in delivery_plan
     assert 'data-level="3"' in delivery_plan

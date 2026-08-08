@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Builds a browsable hierarchy gallery with theme variants and presentation callouts.
+# Summary: Builds a hierarchy gallery with theme variants, example states, and presentation callouts.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
@@ -29,6 +29,7 @@ class _Demo:
     themes_folder: Path | None = None
     numbering: bool = False
     checkboxes: bool = False
+    initially_checked: tuple[str, ...] = ()
 
 
 @dataclass
@@ -115,11 +116,14 @@ def _demos() -> list[_Demo]:
         _Demo(
             slug="delivery-plan",
             title="Delivery Plan",
-            description="Numbered YAML input with tracking checkboxes and the packaged default theme.",
+            description=(
+                "Numbered YAML input with two completed tracking items and the packaged default theme."
+            ),
             source=_GALLERY_ROOT / "data" / "delivery-plan.yaml",
             theme="default",
             numbering=True,
             checkboxes=True,
+            initially_checked=("1", "2"),
         ),
         _Demo(
             slug="document-outline",
@@ -160,6 +164,24 @@ def _presentation_parameters(demo: _Demo) -> str:
         parameters.append(f'themes_folder="{theme_folder}"')
     parameters.extend((f"numbering={demo.numbering}", f"checkboxes={demo.checkboxes}"))
     return "\n".join(parameters)
+
+
+def _apply_initial_checks(path: Path, markers: tuple[str, ...]) -> None:
+    html = path.read_text(encoding="utf-8")
+    for marker in markers:
+        safe_marker = escape(marker, quote=True)
+        unchecked = (
+            '<input class="tree-checkbox" type="checkbox" '
+            f'aria-label="Mark {safe_marker} complete">'
+        )
+        if html.count(unchecked) != 1:
+            raise ValueError(f"Initial checkbox marker must identify one generated item: {marker}")
+        checked = (
+            '<input class="tree-checkbox" type="checkbox" checked '
+            f'aria-label="Mark {safe_marker} complete">'
+        )
+        html = html.replace(unchecked, checked, 1)
+    path.write_text(html, encoding="utf-8")
 
 
 def _gallery_index(demos: list[_Demo]) -> str:
@@ -241,7 +263,7 @@ def _build_gallery(output_folder: Path) -> Path:
     output_folder.mkdir(parents=True, exist_ok=True)
     demos = _demos()
     for demo in demos:
-        render_hierarchy_html(
+        output_path = render_hierarchy_html(
             demo.source,
             title=demo.title,
             theme=demo.theme,
@@ -251,6 +273,7 @@ def _build_gallery(output_folder: Path) -> Path:
             output_filename=f"{demo.slug}.html",
             output_folder=output_folder,
         )
+        _apply_initial_checks(output_path, demo.initially_checked)
     index_path = output_folder / "index.html"
     index_path.write_text(_gallery_index(demos), encoding="utf-8")
     return index_path.resolve()
