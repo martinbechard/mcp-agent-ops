@@ -132,6 +132,44 @@ uv run ruff check .
 uv run mypy src
 ```
 
+## Hierarchical HTML rendering
+
+The package exports a framework-independent function for plans, outlines, reports, and other
+nested mappings or sequences. It accepts in-memory data, JSON or YAML text, or an existing
+`.json`, `.yaml`, or `.yml` file. The result is a self-contained HTML document with accessible
+branch controls plus expand-all and collapse-all actions.
+
+```python
+from pathlib import Path
+
+from mcp_agent_ops.hierarchy import render_hierarchy_html
+
+plan = {
+    "Delivery": {
+        "steps": [
+            {"name": "Discover", "complete": True},
+            {"name": "Implement", "complete": False},
+        ]
+    }
+}
+
+html = render_hierarchy_html(plan, title="Delivery plan")
+saved_path = render_hierarchy_html(
+    Path("plan.yaml"),
+    title="Delivery plan",
+    theme="outline",
+    output_filename="plan.html",
+    output_folder="reports",
+)
+```
+
+Packaged themes are `default` and `outline`. To provide another appearance, place a standalone
+CSS file such as `themes/roadmap.css` in a caller-owned folder and pass
+`theme="roadmap", themes_folder="themes"`. Shared responsive tree styles remain embedded, and
+the selected theme CSS is added to the same output. When `output_filename` is omitted, the return
+value is the complete HTML string. When it is present, the function creates the optional output
+folder, writes UTF-8 HTML, and returns the resolved output path.
+
 ## Local MCP configuration
 
 Configure an MCP host to run:

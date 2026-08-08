@@ -9,6 +9,9 @@
 - Technology registry reuse and one manifest-evidence computation per scope.
 - Nested source, owner-manifest, owner-evidence, skill-manifest, and adapter-metadata symlink escape rejection, including explicitly allowed secondary skill roots and safe in-project links.
 - Markdown target caching within one verification operation.
+- Hierarchical mapping and sequence rendering, HTML escaping, JSON/YAML content and file input,
+  collapse/expand controls, packaged and caller-supplied themes, cyclic input rejection, and
+  self-contained output-file writing.
 
 ## Claim compatibility tests
 

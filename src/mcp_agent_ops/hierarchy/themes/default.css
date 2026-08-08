@@ -1,0 +1,27 @@
+/*
+ * Copyright (c) 2026 Martin.Bechard@DevConsult.ca
+ * AI attribution: Generated with AI assistance.
+ * Summary: Provides a neutral light theme for general hierarchical documents.
+ * Design: docs/design/high-level/architecture.md
+ * Test plan: docs/reference/test-plan.md
+ */
+
+:root {
+  color-scheme: light;
+  --background: #f4f6f8;
+  --surface: #ffffff;
+  --control: #f8fafc;
+  --hover: #eef6ff;
+  --text: #26313d;
+  --heading: #111827;
+  --muted: #64748b;
+  --key: #1e3a5f;
+  --string: #276749;
+  --number: #9c4221;
+  --boolean: #6b46c1;
+  --accent: #2563eb;
+  --branch: #cbd5e1;
+  --border: #dbe2ea;
+  --border-strong: #c5cfdb;
+  --shadow: 0 18px 48px rgb(15 23 42 / 8%);
+}

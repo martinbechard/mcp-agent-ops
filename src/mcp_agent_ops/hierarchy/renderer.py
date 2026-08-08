@@ -1,0 +1,352 @@
+# Copyright (c) 2026 Martin.Bechard@DevConsult.ca
+# AI attribution: Generated with AI assistance.
+# Summary: Renders JSON/YAML mappings and sequences as safe, themed, collapsible HTML trees.
+# Design: docs/design/high-level/architecture.md
+# Test plan: docs/reference/test-plan.md
+
+from __future__ import annotations
+
+import json
+import re
+from collections.abc import Mapping, Sequence
+from datetime import date, datetime
+from html import escape
+from itertools import count
+from pathlib import Path
+from typing import TypeGuard, overload
+
+import yaml
+
+_SOURCE_SUFFIXES = frozenset({".json", ".yaml", ".yml"})
+_THEME_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+_THEMES_ROOT = Path(__file__).resolve().with_name("themes")
+_SCALAR_TYPES = (str, int, float, bool, date, type(None))
+
+_SCRIPT = """(() => {
+  const root = document.querySelector("[data-hierarchy-root]");
+  if (!root) return;
+
+  const setExpanded = (button, expanded) => {
+    button.setAttribute("aria-expanded", String(expanded));
+    const children = document.getElementById(button.getAttribute("aria-controls"));
+    if (children) children.hidden = !expanded;
+  };
+
+  root.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const button = event.target.closest(".tree-toggle");
+    if (!button || !root.contains(button)) return;
+    setExpanded(button, button.getAttribute("aria-expanded") !== "true");
+  });
+
+  document.querySelectorAll("[data-action]").forEach((control) => {
+    control.addEventListener("click", () => {
+      const expanded = control.getAttribute("data-action") === "expand";
+      root.querySelectorAll(".tree-toggle").forEach((button) => setExpanded(button, expanded));
+    });
+  });
+})();"""
+
+
+def _is_sequence(value: object) -> TypeGuard[Sequence[object]]:
+    return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
+
+
+def _is_branch(value: object) -> bool:
+    return isinstance(value, Mapping) or _is_sequence(value)
+
+
+def _validate_hierarchy(value: object, ancestors: set[int], *, root: bool = False) -> None:
+    if isinstance(value, Mapping):
+        identity = id(value)
+        if identity in ancestors:
+            raise ValueError("Hierarchy contains a cycle and cannot be rendered.")
+        ancestors.add(identity)
+        try:
+            for key, child in value.items():
+                if not isinstance(key, _SCALAR_TYPES):
+                    raise TypeError("Hierarchy mapping keys must be scalar values.")
+                _validate_hierarchy(child, ancestors)
+        finally:
+            ancestors.remove(identity)
+        return
+    if _is_sequence(value):
+        identity = id(value)
+        if identity in ancestors:
+            raise ValueError("Hierarchy contains a cycle and cannot be rendered.")
+        ancestors.add(identity)
+        try:
+            for child in value:
+                _validate_hierarchy(child, ancestors)
+        finally:
+            ancestors.remove(identity)
+        return
+    if root:
+        raise TypeError("Hierarchy root must be a mapping or sequence.")
+    if not isinstance(value, _SCALAR_TYPES):
+        raise TypeError(
+            "Hierarchy values must be JSON/YAML scalars, mappings, or sequences; "
+            f"got {type(value).__name__}."
+        )
+
+
+def _parse_content(content: str, suffix: str | None = None) -> object:
+    try:
+        if suffix == ".json":
+            return json.loads(content)
+        if suffix in {".yaml", ".yml"}:
+            return yaml.safe_load(content)
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            return yaml.safe_load(content)
+    except (json.JSONDecodeError, yaml.YAMLError) as error:
+        raise ValueError("Hierarchy content is not valid JSON or YAML.") from error
+
+
+def _read_source_file(path: Path) -> object:
+    expanded = path.expanduser()
+    if not expanded.is_file():
+        raise FileNotFoundError(f"Hierarchy source file does not exist: {expanded}")
+    suffix = expanded.suffix.lower()
+    if suffix not in _SOURCE_SUFFIXES:
+        raise ValueError("Hierarchy source file must use a .json, .yaml, or .yml extension.")
+    return _parse_content(expanded.read_text(encoding="utf-8"), suffix)
+
+
+def _string_source_path(value: str) -> Path | None:
+    stripped = value.strip()
+    if not stripped or "\n" in value or "\r" in value or stripped.startswith(("{", "[")):
+        return None
+    candidate = Path(value).expanduser()
+    try:
+        if candidate.exists():
+            return candidate
+    except OSError:
+        return None
+    return None
+
+
+def _load_hierarchy(source: object) -> object:
+    if isinstance(source, Path):
+        hierarchy = _read_source_file(source)
+    elif isinstance(source, str):
+        source_path = _string_source_path(source)
+        hierarchy = _read_source_file(source_path) if source_path is not None else _parse_content(source)
+    else:
+        hierarchy = source
+    _validate_hierarchy(hierarchy, set(), root=True)
+    return hierarchy
+
+
+def _value_kind(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    return "string"
+
+
+def _value_text(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, datetime):
+        return value.isoformat(sep=" ")
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)
+
+
+def _branch_entries(value: object) -> list[tuple[str, object]]:
+    if isinstance(value, Mapping):
+        return [(str(key), child) for key, child in value.items()]
+    if _is_sequence(value):
+        return [(f"[{index}]", child) for index, child in enumerate(value)]
+    raise TypeError("Branch values must be mappings or sequences.")
+
+
+def _render_node(label: str, value: object, identifiers: count[int]) -> str:
+    safe_label = escape(label, quote=True)
+    if not _is_branch(value):
+        kind = _value_kind(value)
+        safe_value = escape(_value_text(value), quote=True)
+        return (
+            '<li class="tree-node tree-leaf" role="treeitem">'
+            '<div class="node-line">'
+            f'<span class="tree-key">{safe_label}</span>'
+            '<span class="tree-separator" aria-hidden="true">:</span>'
+            f'<span class="tree-value type-{kind}">{safe_value}</span>'
+            "</div></li>"
+        )
+
+    entries = _branch_entries(value)
+    node_id = f"hierarchy-node-{next(identifiers)}"
+    branch_kind = "object" if isinstance(value, Mapping) else "array"
+    item_label = "item" if len(entries) == 1 else "items"
+    children = "".join(_render_node(child_label, child, identifiers) for child_label, child in entries)
+    return (
+        '<li class="tree-node tree-branch" role="treeitem">'
+        '<div class="node-line">'
+        f'<button type="button" class="tree-toggle" aria-expanded="true" aria-controls="{node_id}">'
+        '<span class="tree-chevron" aria-hidden="true"></span>'
+        f'<span class="tree-key">{safe_label}</span>'
+        f'<span class="tree-meta">{branch_kind} · {len(entries)} {item_label}</span>'
+        "</button></div>"
+        f'<ul class="tree-children" id="{node_id}" role="group">{children}</ul>'
+        "</li>"
+    )
+
+
+def _read_css(path: Path, description: str) -> str:
+    if not path.is_file():
+        raise FileNotFoundError(f"{description} file does not exist: {path}")
+    content = path.read_text(encoding="utf-8")
+    if re.search(r"</style", content, flags=re.IGNORECASE):
+        raise ValueError(f"{description} CSS must not contain a closing style tag.")
+    return content
+
+
+def _theme_css(theme: str, themes_folder: str | Path | None) -> str:
+    if _THEME_NAME.fullmatch(theme) is None:
+        raise ValueError("Theme must be a simple base name containing only letters, numbers, hyphens, or underscores.")
+    base_css = _read_css(_THEMES_ROOT / "base.css", "Base theme")
+    themes_root = _THEMES_ROOT if themes_folder is None else Path(themes_folder).expanduser().resolve()
+    candidate = (themes_root / f"{theme}.css").resolve()
+    if candidate.parent != themes_root:
+        raise ValueError("Theme file resolves outside the themes folder.")
+    return f"{base_css}\n{_read_css(candidate, 'Theme')}"
+
+
+def _render_document(hierarchy: object, title: str, theme: str, css: str) -> str:
+    entries = _branch_entries(hierarchy)
+    identifiers: count[int] = count(1)
+    nodes = "".join(_render_node(label, value, identifiers) for label, value in entries)
+    safe_title = escape(title, quote=True)
+    safe_theme = escape(theme, quote=True)
+    item_label = "item" if len(entries) == 1 else "items"
+    return f"""<!doctype html>
+<html lang="en" data-theme="{safe_theme}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{safe_title}</title>
+  <style>
+{css}
+  </style>
+</head>
+<body>
+  <main class="hierarchy-document">
+    <header class="document-header">
+      <div>
+        <h1>{safe_title}</h1>
+        <p class="document-summary">{len(entries)} top-level {item_label}</p>
+      </div>
+      <div class="tree-actions" aria-label="Tree controls">
+        <button type="button" data-action="expand">Expand all</button>
+        <button type="button" data-action="collapse">Collapse all</button>
+      </div>
+    </header>
+    <ul class="hierarchy-tree" role="tree" data-hierarchy-root>{nodes}</ul>
+  </main>
+  <script>
+{_SCRIPT}
+  </script>
+</body>
+</html>
+"""
+
+
+def _save_html(html: str, output_filename: str | Path, output_folder: str | Path | None) -> Path:
+    filename = Path(output_filename)
+    if not filename.name or filename.name in {".", ".."} or filename.parent != Path("."):
+        raise ValueError("output_filename must be a base file name without a directory.")
+    folder = Path.cwd() if output_folder is None else Path(output_folder).expanduser()
+    folder.mkdir(parents=True, exist_ok=True)
+    resolved_folder = folder.resolve()
+    target = resolved_folder / filename.name
+    if target.is_symlink():
+        raise ValueError("Output file must not be a symbolic link.")
+    target.write_text(html, encoding="utf-8")
+    return target.resolve()
+
+
+@overload
+def render_hierarchy_html(
+    source: object,
+    *,
+    title: str = "Hierarchy",
+    theme: str = "default",
+    themes_folder: str | Path | None = None,
+    output_filename: None = None,
+    output_folder: str | Path | None = None,
+) -> str: ...
+
+
+@overload
+def render_hierarchy_html(
+    source: object,
+    *,
+    title: str = "Hierarchy",
+    theme: str = "default",
+    themes_folder: str | Path | None = None,
+    output_filename: str | Path,
+    output_folder: str | Path | None = None,
+) -> Path: ...
+
+
+def render_hierarchy_html(
+    source: object,
+    *,
+    title: str = "Hierarchy",
+    theme: str = "default",
+    themes_folder: str | Path | None = None,
+    output_filename: str | Path | None = None,
+    output_folder: str | Path | None = None,
+) -> str | Path:
+    """Render hierarchical data as a safe, self-contained, collapsible HTML document.
+
+    Use this function for agent plans, reports, outlines, and other mapping-or-sequence
+    structures that benefit from nested expand and collapse controls. Mapping order and
+    sequence order are preserved.
+
+    Args:
+        source: An in-memory mapping or non-string sequence, JSON or YAML text, an
+            existing `.json`, `.yaml`, or `.yml` filename, or a `Path` to such a file.
+            String filenames are recognized when they exist; use `Path` for an explicit
+            filename that may not exist.
+        title: Document title shown in the browser title bar and page header.
+        theme: Base name of the selected CSS file, without the `.css` extension.
+        themes_folder: Optional folder containing `<theme>.css`. When omitted, the
+            packaged themes are used. Packaged base layout CSS is always included.
+        output_filename: Optional base filename. When supplied, the HTML is written and
+            the resolved output `Path` is returned; otherwise the complete HTML is returned.
+        output_folder: Optional destination folder, created when needed. It is valid only
+            when `output_filename` is supplied and defaults to the current directory.
+
+    Returns:
+        The complete HTML string when `output_filename` is absent, or the resolved path
+        of the saved self-contained HTML file when it is present.
+
+    Raises:
+        FileNotFoundError: If a source or selected theme file does not exist.
+        TypeError: If the root is not a mapping or sequence, or a nested value is not a
+            JSON/YAML scalar, mapping, or sequence.
+        ValueError: If parsing fails, the hierarchy is cyclic, a theme or output name is
+            unsafe, or `output_folder` is supplied without `output_filename`.
+
+    Side effects:
+        Reads source or theme files when selected. Creates the output folder and writes
+        one UTF-8 HTML file when `output_filename` is supplied.
+    """
+    if output_filename is None and output_folder is not None:
+        raise ValueError("output_folder requires output_filename.")
+    hierarchy = _load_hierarchy(source)
+    css = _theme_css(theme, themes_folder)
+    html = _render_document(hierarchy, title, theme, css)
+    if output_filename is None:
+        return html
+    return _save_html(html, output_filename, output_folder)

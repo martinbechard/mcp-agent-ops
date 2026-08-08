@@ -1,0 +1,201 @@
+/*
+ * Copyright (c) 2026 Martin.Bechard@DevConsult.ca
+ * AI attribution: Generated with AI assistance.
+ * Summary: Defines the shared responsive layout and interaction styles for hierarchical HTML documents.
+ * Design: docs/design/high-level/architecture.md
+ * Test plan: docs/reference/test-plan.md
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  background: var(--background);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+
+button {
+  color: inherit;
+  font: inherit;
+}
+
+.hierarchy-document {
+  width: min(1100px, calc(100% - 2rem));
+  margin: 2rem auto;
+  padding: clamp(1rem, 3vw, 2rem);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.document-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+h1 {
+  margin: 0;
+  color: var(--heading);
+  font-size: clamp(1.5rem, 3vw, 2.25rem);
+  letter-spacing: -0.025em;
+}
+
+.document-summary {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.tree-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.tree-actions button {
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--control);
+  cursor: pointer;
+}
+
+.tree-actions button:hover,
+.tree-actions button:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.hierarchy-tree,
+.tree-children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hierarchy-tree {
+  padding-top: 1rem;
+}
+
+.tree-children {
+  margin-left: 0.7rem;
+  padding-left: 1.25rem;
+  border-left: 1px solid var(--branch);
+}
+
+.tree-node {
+  position: relative;
+}
+
+.node-line {
+  min-height: 2.15rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+}
+
+.tree-toggle {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.2rem 0.35rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.tree-toggle:hover,
+.tree-toggle:focus-visible {
+  background: var(--hover);
+  outline: 2px solid transparent;
+}
+
+.tree-chevron {
+  width: 0.55rem;
+  height: 0.55rem;
+  flex: 0 0 auto;
+  border-right: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 120ms ease;
+}
+
+.tree-toggle[aria-expanded="false"] .tree-chevron {
+  transform: rotate(-45deg);
+}
+
+.tree-key {
+  color: var(--key);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.tree-separator,
+.tree-meta {
+  color: var(--muted);
+}
+
+.tree-meta {
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.tree-value {
+  min-width: 0;
+  padding: 0.1rem 0.35rem;
+  border-radius: 5px;
+  overflow-wrap: anywhere;
+}
+
+.type-string {
+  color: var(--string);
+}
+
+.type-number {
+  color: var(--number);
+}
+
+.type-boolean {
+  color: var(--boolean);
+  font-weight: 650;
+}
+
+.type-null {
+  color: var(--muted);
+  font-style: italic;
+}
+
+@media (max-width: 640px) {
+  .hierarchy-document {
+    width: 100%;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .document-header {
+    flex-direction: column;
+  }
+
+  .tree-children {
+    margin-left: 0.25rem;
+    padding-left: 0.8rem;
+  }
+}

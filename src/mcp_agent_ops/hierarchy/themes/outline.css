@@ -1,0 +1,27 @@
+/*
+ * Copyright (c) 2026 Martin.Bechard@DevConsult.ca
+ * AI attribution: Generated with AI assistance.
+ * Summary: Provides a high-contrast violet theme for plans and structured outlines.
+ * Design: docs/design/high-level/architecture.md
+ * Test plan: docs/reference/test-plan.md
+ */
+
+:root {
+  color-scheme: light;
+  --background: #f7f5fb;
+  --surface: #fffefe;
+  --control: #faf8ff;
+  --hover: #f1ebff;
+  --text: #302a3a;
+  --heading: #241a31;
+  --muted: #746a82;
+  --key: #4c2a72;
+  --string: #23705a;
+  --number: #a04b22;
+  --boolean: #7251a5;
+  --accent: #8250df;
+  --branch: #cfc1e8;
+  --border: #ded5eb;
+  --border-strong: #c4b2df;
+  --shadow: 0 18px 48px rgb(61 38 87 / 10%);
+}

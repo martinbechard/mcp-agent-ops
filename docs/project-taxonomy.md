@@ -27,6 +27,14 @@
 - **Tests location:** `tests/unit/<domain>/test_*.py`
 - **Example:** `src/mcp_agent_ops/skill_catalog/catalog.py`
 
+### Packaged Presentation Assets
+
+- **Purpose:** Self-contained styles and templates consumed by a framework-independent product domain.
+- **Signals:** Files ship inside the Python package and are read by product code at runtime.
+- **Filename pattern:** `src/mcp_agent_ops/<domain>/<asset-category>/*`
+- **Tests location:** `tests/unit/<domain>/test_*.py`
+- **Example:** `src/mcp_agent_ops/hierarchy/themes/default.css`
+
 ### MCP Adapter
 
 - **Purpose:** FastMCP tool and resource declarations that translate protocol inputs and outputs to domain calls.
@@ -108,3 +116,4 @@
 ## Change Log
 
 - 2026-07-15: Established the initial standalone MCP agent-operations taxonomy.
+- 2026-08-08: Added packaged presentation assets for framework-independent renderers.
