@@ -1,12 +1,13 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Verifies local Markdown link targets and heading anchors within a trusted root.
+# Summary: Verifies local Markdown link targets, heading anchors, and HTML IDs within a trusted root.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
 import re
 from collections import Counter
 from collections.abc import Sequence
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -15,6 +16,17 @@ from mcp_agent_ops.verification.paths import PathBoundaryError, resolve_within_r
 
 LINK_PATTERN = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 HEADING_PATTERN = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
+HTML_SUFFIXES = {".htm", ".html"}
+
+
+class _HTMLIDParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ids: set[str] = set()
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        del tag
+        self.ids.update(value for name, value in attrs if name == "id" and value is not None)
 
 
 def _slug(value: str) -> str:
@@ -32,6 +44,17 @@ def _anchors(text: str) -> set[str]:
         anchors.add(base if suffix == 0 else f"{base}-{suffix}")
         counts[base] += 1
     return anchors
+
+
+def _html_ids(text: str) -> set[str]:
+    parser = _HTMLIDParser()
+    try:
+        parser.feed(text)
+        parser.close()
+    except AssertionError:
+        # HTMLParser asserts on some malformed declarations; retain IDs parsed before the failure.
+        pass
+    return parser.ids
 
 
 def _link_destination(raw: str) -> str:
@@ -70,7 +93,8 @@ def verify_markdown_links(root: Path, patterns: Sequence[str]) -> VerificationRe
 
     def anchors(path: Path) -> set[str]:
         if path not in anchor_cache:
-            anchor_cache[path] = _anchors(read_text(path))
+            text = read_text(path)
+            anchor_cache[path] = _html_ids(text) if path.suffix.lower() in HTML_SUFFIXES else _anchors(text)
         return anchor_cache[path]
 
     for pattern in dict.fromkeys(patterns):
@@ -136,7 +160,11 @@ def verify_markdown_links(root: Path, patterns: Sequence[str]) -> VerificationRe
                     findings.append(
                         VerificationFinding(
                             code="missing_anchor",
-                            message="Markdown heading anchor does not exist.",
+                            message=(
+                                "HTML ID anchor does not exist."
+                                if target.suffix.lower() in HTML_SUFFIXES
+                                else "Markdown heading anchor does not exist."
+                            ),
                             path=relative_source,
                             target=destination,
                         )

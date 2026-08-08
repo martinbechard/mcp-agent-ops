@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Verifies deterministic local Markdown link and anchor checks.
+# Summary: Verifies deterministic local Markdown link, heading-anchor, and HTML ID checks.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
@@ -43,6 +43,73 @@ def test_verify_markdown_links_reports_missing_files_and_anchors(tmp_path: Path)
         ("missing_target", "missing.md"),
         ("missing_anchor", "guide.md#not-present"),
     ]
+
+
+def test_verify_markdown_links_accepts_html_id_fragments(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "report.html").write_text(
+        '<section id="summary">Summary</section>\n<div id="summary">Duplicate</div>\n',
+        encoding="utf-8",
+    )
+    (docs / "index.md").write_text("[summary](report.html#summary)\n", encoding="utf-8")
+
+    result = verify_markdown_links(tmp_path, ["docs/**/*.md"])
+
+    assert result.ok is True
+    assert result.findings == []
+
+
+def test_verify_markdown_links_reports_missing_html_id_fragment(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "report.html").write_text('<section id="summary">Summary</section>\n', encoding="utf-8")
+    (docs / "index.md").write_text("[details](report.html#details)\n", encoding="utf-8")
+
+    result = verify_markdown_links(tmp_path, ["docs/**/*.md"])
+
+    assert result.ok is False
+    assert [(finding.code, finding.message, finding.target) for finding in result.findings] == [
+        ("missing_anchor", "HTML ID anchor does not exist.", "report.html#details")
+    ]
+
+
+def test_verify_markdown_links_handles_malformed_html_target(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "broken.html").write_text("<![bogus[", encoding="utf-8")
+    (docs / "index.md").write_text("[broken](broken.html#missing)\n", encoding="utf-8")
+
+    result = verify_markdown_links(tmp_path, ["docs/**/*.md"])
+
+    assert result.ok is False
+    assert [(finding.code, finding.target) for finding in result.findings] == [
+        ("missing_anchor", "broken.html#missing")
+    ]
+
+
+def test_verify_markdown_links_decodes_html_id_fragments(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "report.html").write_text('<section id="release notes">Notes</section>\n', encoding="utf-8")
+    (docs / "index.md").write_text("[notes](report.html#release%20notes)\n", encoding="utf-8")
+
+    result = verify_markdown_links(tmp_path, ["docs/**/*.md"])
+
+    assert result.ok is True
+    assert result.findings == []
+
+
+def test_verify_markdown_links_preserves_markdown_heading_fragments(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("# Setup Steps\n", encoding="utf-8")
+    (docs / "index.md").write_text("[setup](guide.md#setup-steps)\n", encoding="utf-8")
+
+    result = verify_markdown_links(tmp_path, ["docs/**/*.md"])
+
+    assert result.ok is True
+    assert result.findings == []
 
 
 def test_verify_markdown_links_rejects_source_patterns_outside_root(tmp_path: Path) -> None:
