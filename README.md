@@ -134,14 +134,11 @@ uv run mypy src
 
 ## Hierarchical HTML rendering
 
-The package exports a framework-independent function for plans, outlines, reports, and other
-nested mappings or sequences. It accepts in-memory data, JSON or YAML text, or an existing
-`.json`, `.yaml`, or `.yml` file. The result is a self-contained HTML document with accessible
-branch controls plus expand-all and collapse-all actions.
+The package exports `render_hierarchy_html`, a framework-independent Python function for turning
+nested mappings and sequences into responsive, self-contained HTML trees. It accepts in-memory
+data, JSON or YAML text, or an existing `.json`, `.yaml`, or `.yml` file.
 
 ```python
-from pathlib import Path
-
 from mcp_agent_ops.hierarchy import render_hierarchy_html
 
 plan = {
@@ -154,32 +151,11 @@ plan = {
 }
 
 html = render_hierarchy_html(plan, title="Delivery plan")
-saved_path = render_hierarchy_html(
-    Path("plan.yaml"),
-    title="Delivery plan",
-    theme="outline",
-    numbering=True,
-    checkboxes=True,
-    output_filename="plan.html",
-    output_folder="reports",
-)
 ```
 
-Packaged themes are `default` and `outline`. To provide another appearance, place a standalone
-CSS file such as `themes/roadmap.css` in a caller-owned folder and pass
-`theme="roadmap", themes_folder="themes"`. Shared responsive tree styles remain embedded, and
-the selected theme CSS is added to the same output. When `output_filename` is omitted, the return
-value is the complete HTML string. When it is present, the function creates the optional output
-folder, writes UTF-8 HTML, and returns the resolved output path.
-
-Set `numbering=True` to prefix every node with one-based dotted paths such as `1`, `1.2`, and
-`1.2.1`; this replaces synthetic sequence labels such as `[0]`. Set `checkboxes=True` to add an
-interactive checkbox before every number or label. Checkboxes start unchecked and retain state
-only for the current page session—they do not modify the source data.
-
-Every rendered document also includes `1`, `2`, `3`, and `All` level controls beneath the
-Expand All and Collapse All actions. Selecting a number expands branches above that depth and
-collapses branches at that depth, making it possible to reveal the hierarchy one layer at a time.
+See the [complete hierarchical HTML renderer reference](docs/reference/hierarchy-html-renderer.md)
+for inputs, parameters, numbering, transient checkboxes, progressive level controls, themes,
+output behavior, validation, errors, regeneration guidance, and implementation links.
 
 A runnable [hierarchy gallery](examples/hierarchy-gallery/README.md) demonstrates YAML filename,
 full JSON content, and in-memory Python inputs with the two packaged themes and a custom dark

@@ -7,6 +7,9 @@ This gallery demonstrates the three supported input styles and the theme extensi
 - `incident-review.json` is read as full JSON content and rendered with the packaged `outline` theme.
 - an in-memory Python mapping is rendered with the gallery's custom `midnight` theme.
 
+For the complete API and behavior contract, see the
+[hierarchical HTML renderer reference](../../docs/reference/hierarchy-html-renderer.md).
+
 Generate all examples and the gallery index from the repository root:
 
 ```bash
