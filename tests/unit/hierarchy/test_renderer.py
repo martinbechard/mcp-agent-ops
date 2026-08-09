@@ -44,7 +44,9 @@ def test_renders_nested_mappings_and_sequences_as_an_interactive_tree() -> None:
 def test_renders_progressive_level_controls_and_branch_depth_metadata() -> None:
     rendered = render_hierarchy_html({"Plan": {"phases": [{"tasks": ["Write"]}]}})
 
+    assert 'class="tree-control-row"' in rendered
     assert 'class="tree-levels" aria-label="Expand tree to level"' in rendered
+    assert rendered.index('class="tree-levels"') < rendered.index('class="tree-actions"')
     for level in (1, 2, 3):
         assert f'data-level="{level}" aria-pressed="false"' in rendered
         assert f'aria-label="Expand through level {level}"' in rendered
@@ -78,6 +80,8 @@ def test_renders_copy_safe_text_and_a_payload_copy_control() -> None:
         assert f'data-action="{action}" aria-label="{label}" title="{label}"' in rendered
     assert rendered.count('class="tree-action-icon"') == 3
     assert rendered.count('aria-hidden="true" focusable="false"') == 3
+    assert '<path d="M12 5v14"></path><path d="M5 12h14"></path>' in rendered
+    assert '<path d="M5 12h14"></path>' in rendered
     assert ">Copy content</button>" not in rendered
     assert 'class="copy-status" role="status" aria-live="polite"' in rendered
     assert 'navigator.clipboard.writeText(payload)' in rendered
@@ -85,7 +89,8 @@ def test_renders_copy_safe_text_and_a_payload_copy_control() -> None:
     assert "activeElement.focus()" in rendered
     assert 'copyControl.setAttribute("aria-label", copyLabel)' in rendered
     assert 'copyControl.classList.toggle("is-success", copied)' in rendered
-    assert "width: 2.65rem" in rendered
+    assert "width: 2rem" in rendered
+    assert "height: 2rem" in rendered
     assert "stroke: currentColor" in rendered
     assert 'lines.join("\\n")' in rendered
     assert '[data-action="expand"], [data-action="collapse"]' in rendered

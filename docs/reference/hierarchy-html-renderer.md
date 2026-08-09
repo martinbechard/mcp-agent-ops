@@ -151,9 +151,10 @@ treated as document content.
 
 ## Tree controls
 
-Every generated document begins fully expanded and provides two control groups.
-The copy, expand-all, and collapse-all actions use familiar inline SVG icons. Each icon button has
-an accessible name and a matching browser tooltip.
+Every generated document begins fully expanded. One compact control row shows the level presets,
+then the copy, expand-all, and collapse-all actions. The action buttons match the level-button size.
+Copy uses the familiar overlapping-pages icon. Expand all uses a plus, and collapse all uses a
+minus. Each icon button has an accessible name and a matching browser tooltip.
 
 ### Branch and global controls
 

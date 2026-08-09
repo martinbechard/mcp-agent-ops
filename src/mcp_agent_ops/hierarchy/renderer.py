@@ -30,12 +30,12 @@ _COPY_ICON = (
 )
 _EXPAND_ICON = (
     '<svg class="tree-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
-    '<path d="m7 6 5 5 5-5"></path><path d="m7 13 5 5 5-5"></path>'
+    '<path d="M12 5v14"></path><path d="M5 12h14"></path>'
     "</svg>"
 )
 _COLLAPSE_ICON = (
     '<svg class="tree-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
-    '<path d="m7 18 5-5 5 5"></path><path d="m7 11 5-5 5 5"></path>'
+    '<path d="M5 12h14"></path>'
     "</svg>"
 )
 _COPY_CONTROL = (
@@ -448,17 +448,19 @@ def _render_document(
         <h1>{safe_title}</h1>
       </div>
       <div class="tree-controls">
-        <div class="tree-actions" aria-label="Tree controls">
-          {_COPY_CONTROL}
-          {_EXPAND_CONTROL}
-          {_COLLAPSE_CONTROL}
-        </div>
-        <div class="tree-levels" aria-label="Expand tree to level">
-          <span class="tree-level-label">Levels</span>
-          <button type="button" data-level="1" aria-pressed="false" aria-label="Expand through level 1">1</button>
-          <button type="button" data-level="2" aria-pressed="false" aria-label="Expand through level 2">2</button>
-          <button type="button" data-level="3" aria-pressed="false" aria-label="Expand through level 3">3</button>
-          <button type="button" data-level="all" aria-pressed="true" aria-label="Expand all levels">All</button>
+        <div class="tree-control-row">
+          <div class="tree-levels" aria-label="Expand tree to level">
+            <span class="tree-level-label">Levels</span>
+            <button type="button" data-level="1" aria-pressed="false" aria-label="Expand through level 1">1</button>
+            <button type="button" data-level="2" aria-pressed="false" aria-label="Expand through level 2">2</button>
+            <button type="button" data-level="3" aria-pressed="false" aria-label="Expand through level 3">3</button>
+            <button type="button" data-level="all" aria-pressed="true" aria-label="Expand all levels">All</button>
+          </div>
+          <div class="tree-actions" aria-label="Tree controls">
+            {_COPY_CONTROL}
+            {_EXPAND_CONTROL}
+            {_COLLAPSE_CONTROL}
+          </div>
         </div>
         <span class="copy-status" role="status" aria-live="polite" data-copy-status></span>
       </div>
