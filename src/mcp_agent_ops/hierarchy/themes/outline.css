@@ -35,12 +35,3 @@ h1,
   display: block;
   line-height: 1.7;
 }
-
-.tree-leaf .tree-number {
-  display: inline-block;
-  margin-right: 0.5rem;
-}
-
-.tree-leaf .tree-value {
-  padding-left: 0.25rem;
-}

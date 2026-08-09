@@ -42,6 +42,8 @@ def test_gallery_generator_builds_index_and_interactive_examples(tmp_path: Path)
         assert example_value in content
         assert 'class="tree-toggle"' in content
         assert "Expand all" in content
+        assert "Copy content" in content
+        assert 'class="copy-status" role="status" aria-live="polite"' in content
         assert "top-level item" not in content
         assert "object ·" not in content
         assert "array ·" not in content
@@ -70,7 +72,7 @@ def test_gallery_generator_builds_index_and_interactive_examples(tmp_path: Path)
     delivery_plan = (tmp_path / "delivery-plan.html").read_text(encoding="utf-8")
     assert '<span class="tree-number">5.1</span>' in delivery_plan
     assert 'aria-label="5.1 incomplete"' in delivery_plan
-    assert '<span class="tree-number">1</span><span class="tree-key">Objective</span>' in delivery_plan
+    assert '<span class="tree-number">1</span> <span class="tree-key">Objective</span>' in delivery_plan
     assert 'class="tree-toggle" data-depth="0"' in delivery_plan
     assert 'aria-label="item incomplete"' not in delivery_plan
     assert 'class="tree-checkbox"' in delivery_plan
@@ -99,6 +101,15 @@ def test_gallery_generator_builds_index_and_interactive_examples(tmp_path: Path)
     assert '<span class="tree-number">2.1</span>' in document_outline
     assert "Product Requirements Document" in document_outline
     assert 'class="tree-checkbox"' not in document_outline
+    assert (
+        '<span class="tree-number">1</span> '
+        '<span class="tree-key">Purpose and audience</span>' in document_outline
+    )
+    assert (
+        '<span class="tree-key">Purpose</span>'
+        '<span class="tree-separator" aria-hidden="true">:</span> '
+        '<span class="tree-value type-string">Explain why the product change is needed' in document_outline
+    )
     assert "--background: #ffffff" in document_outline
     assert ".tree-leaf > .node-line" in document_outline
     assert "[0]" not in document_outline

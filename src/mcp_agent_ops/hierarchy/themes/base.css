@@ -76,6 +76,10 @@ h1 {
   cursor: pointer;
 }
 
+[data-action="copy"] {
+  min-width: 7.6rem;
+}
+
 .tree-actions button:hover,
 .tree-actions button:focus-visible,
 .tree-levels button:hover,
@@ -210,6 +214,11 @@ h1 {
   overflow-wrap: anywhere;
 }
 
+.tree-line-content {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .tree-separator {
   color: var(--muted);
 }
@@ -219,6 +228,12 @@ h1 {
   padding: 0.1rem 0.35rem;
   border-radius: 5px;
   overflow-wrap: anywhere;
+}
+
+.copy-status {
+  min-height: 1.2em;
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
 .type-string {

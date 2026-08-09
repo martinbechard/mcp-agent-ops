@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Renders JSON/YAML data as safe, themed HTML trees with numbering and report markers.
+# Summary: Renders JSON/YAML data as safe, themed, copyable HTML trees with numbering and report markers.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
@@ -26,6 +26,9 @@ _SCRIPT = """(() => {
   const root = document.querySelector("[data-hierarchy-root]");
   if (!root) return;
   const levelControls = document.querySelectorAll("[data-level]");
+  const copyControl = document.querySelector('[data-action="copy"]');
+  const copyStatus = document.querySelector("[data-copy-status]");
+  let copyResetTimer;
 
   const setExpanded = (button, expanded) => {
     button.setAttribute("aria-expanded", String(expanded));
@@ -52,7 +55,7 @@ _SCRIPT = """(() => {
     levelControls.forEach((control) => control.setAttribute("aria-pressed", "false"));
   });
 
-  document.querySelectorAll("[data-action]").forEach((control) => {
+  document.querySelectorAll('[data-action="expand"], [data-action="collapse"]').forEach((control) => {
     control.addEventListener("click", () => {
       const level = control.getAttribute("data-action") === "expand" ? "all" : "1";
       setVisibleLevel(level);
@@ -64,6 +67,72 @@ _SCRIPT = """(() => {
       setVisibleLevel(control.getAttribute("data-level"));
     });
   });
+
+  const payloadText = () => {
+    const lines = [];
+    const appendList = (list, depth) => {
+      Array.from(list.children).forEach((node) => {
+        if (!(node instanceof Element) || !node.classList.contains("tree-node")) return;
+        const line = node.querySelector(":scope > .node-line .tree-line-content");
+        if (line) {
+          const marker = node.querySelector(":scope > .node-line > .tree-checkbox");
+          const completion = marker
+            ? marker.classList.contains("is-checked") ? "[x] " : "[ ] "
+            : "";
+          const text = line.textContent.replace(/\\s+/g, " ").trim();
+          lines.push(`${"  ".repeat(depth)}${completion}${text}`);
+        }
+        const children = node.querySelector(":scope > .tree-children");
+        if (children) appendList(children, depth + 1);
+      });
+    };
+    appendList(root, 0);
+    return lines.join("\\n");
+  };
+
+  const fallbackCopy = (payload) => {
+    const activeElement = document.activeElement;
+    const field = document.createElement("textarea");
+    field.value = payload;
+    field.setAttribute("readonly", "");
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    document.body.appendChild(field);
+    field.select();
+    const copied = document.execCommand("copy");
+    field.remove();
+    if (activeElement instanceof HTMLElement) activeElement.focus();
+    return copied;
+  };
+
+  const writePayload = async (payload) => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(payload);
+        return true;
+      } catch {
+        return fallbackCopy(payload);
+      }
+    }
+    return fallbackCopy(payload);
+  };
+
+  if (copyControl) {
+    copyControl.addEventListener("click", async () => {
+      const copied = await writePayload(payloadText());
+      copyControl.textContent = copied ? "Copied" : "Copy failed";
+      if (copyStatus) {
+        copyStatus.textContent = copied
+          ? "Hierarchy content copied."
+          : "Could not copy the hierarchy content. Select and copy it manually.";
+      }
+      window.clearTimeout(copyResetTimer);
+      copyResetTimer = window.setTimeout(() => {
+        copyControl.textContent = "Copy content";
+        if (copyStatus) copyStatus.textContent = "";
+      }, 2000);
+    });
+  }
 })();"""
 
 
@@ -227,15 +296,18 @@ def _render_node(
         f'<span class="tree-number">{_number_text(number_path)}</span>' if numbering and number_path else ""
     )
     key = f'<span class="tree-key">{safe_label}</span>' if safe_label is not None else ""
+    number_key_space = " " if number and key else ""
     if not _is_branch(value):
         kind = _value_kind(value)
         safe_value = escape(_value_text(value), quote=True)
         separator = '<span class="tree-separator" aria-hidden="true">:</span>' if key else ""
+        label_value_space = " " if number or key else ""
         return (
             '<li class="tree-node tree-leaf" role="treeitem">'
             '<div class="node-line">'
-            f"{completion_marker}{number}{key}{separator}"
-            f'<span class="tree-value type-{kind}">{safe_value}</span>'
+            f'{completion_marker}<span class="tree-line-content">'
+            f"{number}{number_key_space}{key}{separator}{label_value_space}"
+            f'<span class="tree-value type-{kind}">{safe_value}</span></span>'
             "</div></li>"
         )
 
@@ -259,7 +331,7 @@ def _render_node(
         f'<button type="button" class="tree-toggle" data-depth="{len(number_path)}" '
         f'aria-expanded="true" aria-controls="{node_id}">'
         '<span class="tree-chevron" aria-hidden="true"></span>'
-        f"{number}{key}"
+        f'<span class="tree-line-content">{number}{number_key_space}{key}</span>'
         "</button></div>"
         f'<ul class="tree-children" id="{node_id}" role="group">{children}</ul>'
         "</li>"
@@ -342,6 +414,7 @@ def _render_document(
       </div>
       <div class="tree-controls">
         <div class="tree-actions" aria-label="Tree controls">
+          <button type="button" data-action="copy">Copy content</button>
           <button type="button" data-action="expand">Expand all</button>
           <button type="button" data-action="collapse">Collapse all</button>
         </div>
@@ -352,6 +425,7 @@ def _render_document(
           <button type="button" data-level="3" aria-pressed="false" aria-label="Expand through level 3">3</button>
           <button type="button" data-level="all" aria-pressed="true" aria-label="Expand all levels">All</button>
         </div>
+        <span class="copy-status" role="status" aria-live="polite" data-copy-status></span>
       </div>
     </header>
     <ul class="hierarchy-tree" role="tree" data-hierarchy-root>{nodes}</ul>
@@ -422,7 +496,8 @@ def render_hierarchy_html(
     Use this function for agent plans, reports, outlines, and other mapping-or-sequence
     structures that benefit from nested expand and collapse controls. Mapping order and
     sequence order are preserved. Every document includes controls for showing only
-    levels 1, 2, or 3, or expanding the complete tree.
+    levels 1, 2, or 3, or expanding the complete tree. A copy control writes the complete
+    hierarchy as indented plain text, including descendants hidden by collapsed branches.
 
     Args:
         source: An in-memory mapping or non-string sequence, JSON or YAML text, an

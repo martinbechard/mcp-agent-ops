@@ -156,8 +156,17 @@ Every generated document begins fully expanded and provides two control groups.
 ### Branch and global controls
 
 - Selecting a branch row expands or collapses that branch.
+- **Copy content** copies the complete hierarchy as indented plain text.
 - **Expand all** opens every branch.
 - **Collapse all** leaves the top-level rows visible and hides all child groups.
+
+**Copy content** includes hidden descendants when branches are collapsed. It excludes the document
+title and controls. Numbered labels contain a real text-space delimiter, so manual selection and
+copying also produces text such as `1 Purpose and audience`. Completion markers become `[x]` and
+`[ ]` in the copied text.
+
+The copy button briefly displays **Copied** after success. An assistive status message reports the
+same result. If browser clipboard access is unavailable, the document uses a local copy fallback.
 
 ### Progressive level controls
 
@@ -183,6 +192,7 @@ The generated controls include accessibility metadata:
 - Branch buttons expose `aria-expanded` and `aria-controls`.
 - The hierarchy uses tree, treeitem, and group roles.
 - Level presets expose `aria-pressed` so assistive technology can identify the current state.
+- Copy results use a polite live status message.
 
 ## Numbering
 

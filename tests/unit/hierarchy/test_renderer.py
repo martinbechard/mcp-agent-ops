@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Verifies safe self-contained HTML trees, numbering, report markers, inputs, and themes.
+# Summary: Verifies safe self-contained HTML trees, copying, numbering, report markers, inputs, and themes.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
@@ -54,6 +54,33 @@ def test_renders_progressive_level_controls_and_branch_depth_metadata() -> None:
     assert "depth < visibleLevel" in rendered
 
 
+def test_renders_copy_safe_text_and_a_payload_copy_control() -> None:
+    rendered = render_hierarchy_html(
+        {"Document": {"Purpose and audience": {"Purpose": "Explain the change."}}},
+        numbering=True,
+    )
+
+    assert (
+        '<span class="tree-line-content"><span class="tree-number">1</span> '
+        '<span class="tree-key">Purpose and audience</span></span>' in rendered
+    )
+    assert (
+        '<span class="tree-line-content"><span class="tree-number">1.1</span> '
+        '<span class="tree-key">Purpose</span>'
+        '<span class="tree-separator" aria-hidden="true">:</span> '
+        '<span class="tree-value type-string">Explain the change.</span></span>' in rendered
+    )
+    assert '<button type="button" data-action="copy">Copy content</button>' in rendered
+    assert 'class="copy-status" role="status" aria-live="polite"' in rendered
+    assert 'navigator.clipboard.writeText(payload)' in rendered
+    assert 'document.execCommand("copy")' in rendered
+    assert "activeElement.focus()" in rendered
+    assert '[data-action="copy"]' in rendered
+    assert "min-width: 7.6rem" in rendered
+    assert 'lines.join("\\n")' in rendered
+    assert '[data-action="expand"], [data-action="collapse"]' in rendered
+
+
 def test_optionally_renders_dotted_numbers_and_read_only_completion_markers() -> None:
     rendered = render_hierarchy_html(
         {"Plan": {"phases": [{"tasks": ["Write", "Review"]}]}},
@@ -88,16 +115,16 @@ def test_singleton_root_branch_is_transparent_to_numbering_and_tracking() -> Non
     assert 'class="tree-toggle" data-depth="0"' in rendered
     assert '<span class="tree-key">Delivery plan</span>' in rendered
     assert 'aria-label="item incomplete"' not in rendered
-    assert '<span class="tree-number">1</span><span class="tree-key">Objective</span>' in rendered
-    assert '<span class="tree-number">2</span><span class="tree-key">Milestones</span>' in rendered
-    assert '<span class="tree-number">2.1</span><span class="tree-key">Discovery</span>' in rendered
+    assert '<span class="tree-number">1</span> <span class="tree-key">Objective</span>' in rendered
+    assert '<span class="tree-number">2</span> <span class="tree-key">Milestones</span>' in rendered
+    assert '<span class="tree-number">2.1</span> <span class="tree-key">Discovery</span>' in rendered
     assert rendered.count('class="tree-checkbox"') == 3
 
 
 def test_singleton_scalar_root_remains_numbered_and_trackable() -> None:
     rendered = render_hierarchy_html({"Status": "Ready"}, numbering=True, checkboxes=True)
 
-    assert '<span class="tree-number">1</span><span class="tree-key">Status</span>' in rendered
+    assert '<span class="tree-number">1</span> <span class="tree-key">Status</span>' in rendered
     assert 'aria-label="1 incomplete"' in rendered
 
 
