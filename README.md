@@ -270,7 +270,7 @@ Releases use semantic versions. The Git tag must be `v` followed by the exact `p
 3. Commit the version and lockfile, push `main`, and wait for its CI run to succeed:
 
    ```bash
-   VERSION=0.3.0
+   VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml)"
    git add pyproject.toml uv.lock
    git commit -m "Prepare release v${VERSION}"
    git push origin main
