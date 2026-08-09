@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from html import escape
 from pathlib import Path
 
-from mcp_agent_ops.hierarchy import render_hierarchy_html
+from mcp_agent_ops.hierarchy import create_hierarchy_plan, render_hierarchy_html
 
 _GALLERY_ROOT = Path(__file__).resolve().parent
 _REPOSITORY_ROOT = _GALLERY_ROOT.parents[1]
@@ -166,24 +166,6 @@ def _presentation_parameters(demo: _Demo) -> str:
     return "\n".join(parameters)
 
 
-def _apply_initial_completion(path: Path, markers: tuple[str, ...]) -> None:
-    html = path.read_text(encoding="utf-8")
-    for marker in markers:
-        safe_marker = escape(marker, quote=True)
-        incomplete = (
-            '<span class="tree-checkbox" role="img" '
-            f'aria-label="{safe_marker} incomplete"></span>'
-        )
-        if html.count(incomplete) != 1:
-            raise ValueError(f"Initial completion marker must identify one generated item: {marker}")
-        complete = (
-            '<span class="tree-checkbox is-checked" role="img" '
-            f'aria-label="{safe_marker} complete"></span>'
-        )
-        html = html.replace(incomplete, complete, 1)
-    path.write_text(html, encoding="utf-8")
-
-
 def _gallery_index(demos: list[_Demo]) -> str:
     cards = "\n".join(
         f"""      <article class="gallery-card">
@@ -263,17 +245,27 @@ def _build_gallery(output_folder: Path) -> Path:
     output_folder.mkdir(parents=True, exist_ok=True)
     demos = _demos()
     for demo in demos:
-        output_path = render_hierarchy_html(
-            demo.source,
-            title=demo.title,
-            theme=demo.theme,
-            themes_folder=demo.themes_folder,
-            numbering=demo.numbering,
-            checkboxes=demo.checkboxes,
-            output_filename=f"{demo.slug}.html",
-            output_folder=output_folder,
-        )
-        _apply_initial_completion(output_path, demo.initially_complete)
+        if demo.checkboxes:
+            create_hierarchy_plan(
+                demo.source,
+                title=demo.title,
+                theme=demo.theme,
+                themes_folder=demo.themes_folder,
+                output_filename=f"{demo.slug}.html",
+                output_folder=output_folder,
+                completed_items=demo.initially_complete,
+            )
+        else:
+            render_hierarchy_html(
+                demo.source,
+                title=demo.title,
+                theme=demo.theme,
+                themes_folder=demo.themes_folder,
+                numbering=demo.numbering,
+                checkboxes=demo.checkboxes,
+                output_filename=f"{demo.slug}.html",
+                output_folder=output_folder,
+            )
     index_path = output_folder / "index.html"
     index_path.write_text(_gallery_index(demos), encoding="utf-8")
     return index_path.resolve()

@@ -16,9 +16,11 @@
 - Hierarchical mapping and sequence rendering, HTML escaping, JSON/YAML content and file input,
   copy-safe text spacing, complete payload copying, compact accessible SVG action controls,
   level-first control order, plus/minus global controls, progressive level visibility, dotted
-  one-based numbering, transparent singleton roots, optional read-only completion markers,
-  packaged and caller-supplied themes, cyclic input rejection, and self-contained output-file
-  writing.
+  one-based numbering, transparent singleton roots, exact completed-item paths, optional read-only
+  completion markers, durable plan creation, JSON source-path returns, unique-title and exact-path
+  targeting, completion and text updates, child replacement and insertion, peer insertion,
+  regeneration, packaged and caller-supplied themes, cyclic input rejection, and self-contained
+  output-file writing.
 
 ## Claim compatibility tests
 
@@ -51,8 +53,9 @@
 ## Integration tests
 
 - The checked-in hierarchy gallery generator produces its index and all interactive example pages
-  from YAML filename, full JSON content, and in-memory inputs, including its caller-supplied theme
-  and presentation-only parameter callouts.
+  from YAML filename, full JSON content, and in-memory inputs. The delivery-plan example also
+  produces its durable JSON source. The gallery includes a caller-supplied theme and
+  presentation-only parameter callouts.
 - Simultaneous claim processes cannot both acquire primary ownership.
 - Overlapping concurrent claims produce one safe owner and one wait outcome.
 - A real stdio subprocess initializes, advertises current work-item, deadline, release, reset, and broad-domain schemas, lists tools and resources, preserves reference and skill snapshots until explicit refresh, and shuts down cleanly.

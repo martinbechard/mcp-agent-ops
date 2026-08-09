@@ -4,6 +4,8 @@
 - Pin FastMCP exactly and commit the resolved dependency lock.
 - Keep the domain layer importable without FastMCP initialization.
 - Treat model-supplied repository, project, worktree, validation, requested resource paths, and reference names as untrusted filesystem inputs.
+- Reject symbolic-link hierarchy-plan sources and outputs before mutation.
+- Resolve dotted hierarchy targets by complete one-based path components, never by text-prefix matching.
 - Require administrator-configured workspace and skill roots before resolving model-supplied paths.
 - Require model-supplied workspace and skill paths to be absolute and contained after symlink resolution.
 - Recheck every nested skill manifest, adapter metadata file, technology source, owner manifest, owner-evidence file, and resource at its read boundary.

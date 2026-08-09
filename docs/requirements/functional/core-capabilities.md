@@ -53,6 +53,14 @@
 - Detection blocks a scope when a nested source, owner manifest, or owner-evidence path resolves outside its project root.
 - Detection parses the registry once per server process and computes manifest evidence once per requested scope.
 
+## Hierarchical Plans
+
+- The direct Python API renders supported hierarchy input as self-contained themed HTML.
+- Durable plan creation writes a same-named JSON source and HTML report, then returns the JSON path.
+- Plan mutation targets one item by an exact dotted path or exact unique title.
+- One mutation call can change completion, replace text, add a child, replace all children, or add a peer after the target.
+- Every successful mutation rewrites the JSON source and regenerates the read-only HTML report.
+
 ## Protocol
 
 - The service starts over stdio without writing non-protocol output to standard output.

@@ -15,15 +15,22 @@ CLI user -> CLI adapter -----^
 - `skill_catalog` owns root precedence, metadata extraction, immutable manifest snapshots, batch limits, digests, and safe content retrieval.
 - `skill_validation` owns deterministic Agent Skill structure validation.
 - `technology_detection` owns evidence-based skill selection from a trusted parsed registry.
-- `hierarchy` owns safe parsing and self-contained themed HTML rendering of hierarchical data.
+- `hierarchy` owns safe parsing, self-contained themed HTML rendering, and durable plan mutation.
 
 No domain module depends on FastMCP. Adapters translate typed requests to domain calls and translate domain results to stable structured responses.
 
-The `hierarchy` package is a direct Python API rather than an MCP or CLI capability. It accepts
-in-memory data or an explicitly selected JSON/YAML file, reads packaged or caller-selected CSS,
-and optionally writes one HTML document. Source values are validated and HTML-escaped before
+The `hierarchy` package is a direct Python API rather than an MCP or CLI capability. The renderer
+accepts in-memory data or an explicitly selected JSON/YAML file, reads packaged or caller-selected
+CSS, and optionally writes one HTML document. Source values are validated and HTML-escaped before
 rendering. Theme names and output filenames are base names, so nested path authority remains with
 the explicit source, themes-folder, and output-folder parameters.
+
+Durable plan creation normalizes hierarchy input into a same-named JSON source and HTML rendering.
+The JSON file stores ordered item text, completion state, children, and presentation parameters.
+Mutation resolves one item by an exact dotted path or an exact unique title, applies one requested
+change, rewrites the JSON source, and regenerates the HTML. Dotted paths are parsed by component;
+they are not matched as text prefixes. The JSON source remains authoritative, while HTML remains a
+derived read-only report.
 
 ## Claim compatibility
 

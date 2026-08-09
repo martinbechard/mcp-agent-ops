@@ -4,6 +4,7 @@
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -70,9 +71,13 @@ def test_gallery_generator_builds_index_and_interactive_examples(tmp_path: Path)
     assert 'data-theme="blueprint"' in agent_workflow
 
     delivery_plan = (tmp_path / "delivery-plan.html").read_text(encoding="utf-8")
+    delivery_source = json.loads((tmp_path / "delivery-plan.json").read_text(encoding="utf-8"))
+    assert delivery_source["schema"] == "mcp-agent-ops-hierarchy-plan"
+    assert delivery_source["htmlFilename"] == "delivery-plan.html"
     assert '<span class="tree-number">5.1</span>' in delivery_plan
     assert 'aria-label="5.1 incomplete"' in delivery_plan
-    assert '<span class="tree-number">1</span> <span class="tree-key">Objective</span>' in delivery_plan
+    assert '<span class="tree-number">1</span>' in delivery_plan
+    assert "Objective: Release the customer portal refresh" in delivery_plan
     assert 'class="tree-toggle" data-depth="0"' in delivery_plan
     assert 'aria-label="item incomplete"' not in delivery_plan
     assert 'class="tree-checkbox"' in delivery_plan

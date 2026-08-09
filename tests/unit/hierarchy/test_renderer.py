@@ -103,16 +103,29 @@ def test_optionally_renders_dotted_numbers_and_read_only_completion_markers() ->
         checkboxes=True,
     )
 
-    for number in ("1", "1.1", "1.1.1", "1.1.1.1", "1.1.1.2"):
+    for number in ("1", "1.1", "1.1.1", "1.1.2"):
         assert f'<span class="tree-number">{number}</span>' in rendered
         assert f'aria-label="{number} incomplete"' in rendered
-    assert rendered.count('class="tree-checkbox"') == 5
-    assert rendered.count('role="img"') == 5
+    assert rendered.count('class="tree-checkbox"') == 4
+    assert rendered.count('role="img"') == 4
     assert 'type="checkbox"' not in rendered
     assert "disabled" not in rendered
     assert "border: 1.5px solid var(--muted)" in rendered
     assert "[0]" not in rendered
     assert rendered.index('class="tree-checkbox"') < rendered.index('<span class="tree-number">1</span>')
+
+
+def test_renders_exact_completed_item_paths_without_prefix_matching() -> None:
+    rendered = render_hierarchy_html(
+        {"Plan": {"Tasks": [f"Task {index}" for index in range(1, 11)]}},
+        numbering=True,
+        checkboxes=True,
+        completed_items=("1.1",),
+    )
+
+    assert 'aria-label="1.1 complete"' in rendered
+    assert 'aria-label="1.10 incomplete"' in rendered
+    assert 'aria-label="1.10 complete"' not in rendered
 
 
 def test_singleton_root_branch_is_transparent_to_numbering_and_tracking() -> None:
@@ -229,6 +242,14 @@ def test_rejects_invalid_sources_themes_and_output_combinations(tmp_path: Path) 
         )
     with pytest.raises(ValueError, match="base file name"):
         render_hierarchy_html({"plan": []}, output_filename="..", output_folder=tmp_path)
+    with pytest.raises(ValueError, match="requires checkboxes"):
+        render_hierarchy_html({"plan": []}, completed_items=("1",))
+    with pytest.raises(ValueError, match="one-based dotted numbers"):
+        render_hierarchy_html(
+            {"plan": []},
+            checkboxes=True,
+            completed_items=("1.6.0",),
+        )
 
 
 def test_rejects_recursive_in_memory_structures() -> None:

@@ -19,6 +19,7 @@ import yaml
 
 _SOURCE_SUFFIXES = frozenset({".json", ".yaml", ".yml"})
 _THEME_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+_NUMBER_PATH = re.compile(r"[1-9][0-9]*(?:\.[1-9][0-9]*)*")
 _THEMES_ROOT = Path(__file__).resolve().with_name("themes")
 _SCALAR_TYPES = (str, int, float, bool, date, type(None))
 
@@ -303,12 +304,15 @@ def _completion_marker_html(
     number_path: tuple[int, ...],
     *,
     numbering: bool,
+    complete: bool,
 ) -> str:
     marker = _number_text(number_path) if numbering else label
     safe_marker = escape(marker or "item", quote=True)
+    state_class = " is-checked" if complete else ""
+    state = "complete" if complete else "incomplete"
     return (
-        '<span class="tree-checkbox" role="img" '
-        f'aria-label="{safe_marker} incomplete"></span>'
+        f'<span class="tree-checkbox{state_class}" role="img" '
+        f'aria-label="{safe_marker} {state}"></span>'
     )
 
 
@@ -320,10 +324,27 @@ def _render_node(
     *,
     numbering: bool,
     checkboxes: bool,
+    completed_paths: frozenset[tuple[int, ...]],
 ) -> str:
+    if numbering and label is None and isinstance(value, Mapping) and len(value) == 1:
+        nested_label, nested_value = next(iter(value.items()))
+        return _render_node(
+            str(nested_label),
+            nested_value,
+            identifiers,
+            number_path,
+            numbering=numbering,
+            checkboxes=checkboxes,
+            completed_paths=completed_paths,
+        )
     safe_label = escape(label, quote=True) if label is not None else None
     completion_marker = (
-        _completion_marker_html(label, number_path, numbering=numbering)
+        _completion_marker_html(
+            label,
+            number_path,
+            numbering=numbering,
+            complete=number_path in completed_paths,
+        )
         if checkboxes and number_path
         else ""
     )
@@ -356,6 +377,7 @@ def _render_node(
             (*number_path, child_index),
             numbering=numbering,
             checkboxes=checkboxes,
+            completed_paths=completed_paths,
         )
         for child_index, (child_label, child) in enumerate(entries, start=1)
     )
@@ -401,6 +423,7 @@ def _render_document(
     *,
     numbering: bool,
     checkboxes: bool,
+    completed_paths: frozenset[tuple[int, ...]],
 ) -> str:
     entries = _branch_entries(hierarchy, numbering=numbering)
     identifiers: count[int] = count(1)
@@ -416,6 +439,7 @@ def _render_document(
             (),
             numbering=True,
             checkboxes=checkboxes,
+            completed_paths=completed_paths,
         )
     else:
         nodes = "".join(
@@ -426,6 +450,7 @@ def _render_document(
                 (index,),
                 numbering=numbering,
                 checkboxes=checkboxes,
+                completed_paths=completed_paths,
             )
             for index, (label, value) in enumerate(entries, start=1)
         )
@@ -489,6 +514,15 @@ def _save_html(html: str, output_filename: str | Path, output_folder: str | Path
     return target.resolve()
 
 
+def _parse_completed_items(completed_items: Sequence[str]) -> frozenset[tuple[int, ...]]:
+    paths: set[tuple[int, ...]] = set()
+    for item in completed_items:
+        if not isinstance(item, str) or _NUMBER_PATH.fullmatch(item) is None:
+            raise ValueError("Completed items must use one-based dotted numbers such as '1.6.1'.")
+        paths.add(tuple(int(part) for part in item.split(".")))
+    return frozenset(paths)
+
+
 @overload
 def render_hierarchy_html(
     source: object,
@@ -498,6 +532,7 @@ def render_hierarchy_html(
     themes_folder: str | Path | None = None,
     numbering: bool = False,
     checkboxes: bool = False,
+    completed_items: Sequence[str] = (),
     output_filename: None = None,
     output_folder: str | Path | None = None,
 ) -> str: ...
@@ -512,6 +547,7 @@ def render_hierarchy_html(
     themes_folder: str | Path | None = None,
     numbering: bool = False,
     checkboxes: bool = False,
+    completed_items: Sequence[str] = (),
     output_filename: str | Path,
     output_folder: str | Path | None = None,
 ) -> Path: ...
@@ -525,6 +561,7 @@ def render_hierarchy_html(
     themes_folder: str | Path | None = None,
     numbering: bool = False,
     checkboxes: bool = False,
+    completed_items: Sequence[str] = (),
     output_filename: str | Path | None = None,
     output_folder: str | Path | None = None,
 ) -> str | Path:
@@ -553,6 +590,9 @@ def render_hierarchy_html(
             node's number or label. An unnumbered singleton root wrapper is structural
             and receives no marker. The marker is read-only and does not change or write
             back to the source data.
+        completed_items: One-based dotted item paths that render with completed markers.
+            Paths are matched as complete identifiers, so `1.6.1` does not match
+            `1.6.10` or `1.6.1.1`. This parameter requires `checkboxes=True`.
         output_filename: Optional base filename. When supplied, the HTML is written and
             the resolved output `Path` is returned; otherwise the complete HTML is returned.
         output_folder: Optional destination folder, created when needed. It is valid only
@@ -566,8 +606,9 @@ def render_hierarchy_html(
         FileNotFoundError: If a source or selected theme file does not exist.
         TypeError: If the root is not a mapping or sequence, or a nested value is not a
             JSON/YAML scalar, mapping, or sequence.
-        ValueError: If parsing fails, the hierarchy is cyclic, a theme or output name is
-            unsafe, or `output_folder` is supplied without `output_filename`.
+        ValueError: If parsing fails, the hierarchy is cyclic, a theme, completion path,
+            or output name is unsafe, completion paths are supplied without checkboxes,
+            or `output_folder` is supplied without `output_filename`.
 
     Side effects:
         Reads source or theme files when selected. Creates the output folder and writes
@@ -575,8 +616,11 @@ def render_hierarchy_html(
     """
     if output_filename is None and output_folder is not None:
         raise ValueError("output_folder requires output_filename.")
+    if completed_items and not checkboxes:
+        raise ValueError("completed_items requires checkboxes=True.")
     hierarchy = _load_hierarchy(source)
     css = _theme_css(theme, themes_folder)
+    completed_paths = _parse_completed_items(completed_items)
     html = _render_document(
         hierarchy,
         title,
@@ -584,6 +628,7 @@ def render_hierarchy_html(
         css,
         numbering=numbering,
         checkboxes=checkboxes,
+        completed_paths=completed_paths,
     )
     if output_filename is None:
         return html

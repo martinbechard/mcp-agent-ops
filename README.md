@@ -132,7 +132,7 @@ uv run ruff check .
 uv run mypy src
 ```
 
-## Hierarchical HTML rendering
+## Hierarchical HTML rendering and durable plans
 
 The package exports `render_hierarchy_html`, a framework-independent Python function for turning
 nested mappings and sequences into responsive, self-contained HTML trees. It accepts in-memory
@@ -153,10 +153,24 @@ plan = {
 html = render_hierarchy_html(plan, title="Delivery plan")
 ```
 
+For an agent-managed plan, create a durable JSON source beside the rendered HTML. The creation
+function returns the JSON path that every later mutation accepts:
+
+```python
+from mcp_agent_ops.hierarchy import create_hierarchy_plan, update_hierarchy_plan
+
+plan_path = create_hierarchy_plan(
+    {"Delivery plan": ["Discover", "Implement", "Release"]},
+    output_filename="delivery-plan.html",
+    output_folder="reports",
+)
+update_hierarchy_plan(plan_path, "2", add_child="Write focused tests")
+update_hierarchy_plan(plan_path, "Implement", completed=True)
+```
+
 See the [complete hierarchical HTML renderer reference](docs/reference/hierarchy-html-renderer.md)
-for inputs, parameters, numbering, read-only completion markers, copy behavior, progressive level
-controls, themes, output behavior, validation, errors, regeneration guidance, and implementation
-links.
+for rendering, durable plan creation, exact item targeting, mutations, numbering, read-only browser
+markers, themes, validation, errors, regeneration behavior, and implementation links.
 
 A runnable [hierarchy gallery](examples/hierarchy-gallery/README.md) includes structured examples
 and a reviewable Markdown document outline. The examples use the packaged `default`, `outline`, and

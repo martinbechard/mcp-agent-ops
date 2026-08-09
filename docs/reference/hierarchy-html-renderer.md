@@ -1,8 +1,8 @@
-# Hierarchical HTML Renderer
+# Hierarchical HTML and Plan API
 
 `render_hierarchy_html` turns a mapping or sequence into a responsive, self-contained HTML tree.
-It is a direct Python API for plans, reports, outlines, and other nested information. The renderer
-is not an MCP tool or CLI command.
+`create_hierarchy_plan` and `update_hierarchy_plan` add durable, agent-managed plan state. These
+functions are direct Python APIs. They are not MCP tools or CLI commands.
 
 The function produces a standalone document. The document embeds its CSS and JavaScript. It
 escapes source labels and values and preserves source order. The function can return the complete
@@ -63,6 +63,8 @@ flowchart LR
 
 ## Public API
 
+### `render_hierarchy_html`
+
 ```python
 render_hierarchy_html(
     source,
@@ -72,6 +74,7 @@ render_hierarchy_html(
     themes_folder=None,
     numbering=False,
     checkboxes=False,
+    completed_items=(),
     output_filename=None,
     output_folder=None,
 )
@@ -84,7 +87,8 @@ render_hierarchy_html(
 | `theme` | Simple base name | Selects `<theme>.css`. Packaged choices are `default`, `outline`, and `midnight`. Default: `default`. |
 | `themes_folder` | `str`, `Path`, or `None` | Selects a caller-owned theme folder. Packaged themes are used when omitted. |
 | `numbering` | `bool` | Adds one-based dotted numbers such as `1`, `1.2`, and `1.2.1`. A singleton branch root is an unnumbered wrapper. Default: `False`. |
-| `checkboxes` | `bool` | Adds a static, initially incomplete marker to each trackable node. A transparent singleton wrapper is not trackable. Default: `False`. |
+| `checkboxes` | `bool` | Adds a static marker to each trackable node. A transparent singleton wrapper is not trackable. Default: `False`. |
+| `completed_items` | Sequence of dotted paths | Selects exact markers that render complete. Requires `checkboxes=True`. Default: empty. |
 | `output_filename` | Base filename or `None` | Writes the document when supplied. A directory component is not accepted. |
 | `output_folder` | `str`, `Path`, or `None` | Selects or creates the destination folder. Requires `output_filename` and defaults to the current directory. |
 
@@ -222,22 +226,115 @@ For example, a `Delivery plan` wrapper can contain `1 Objective`, `2 Owner`, and
 Nested milestone items continue as `5.1`, `5.2`, and `5.3`.
 
 Sequence labels such as `[0]` are omitted in numbered output. Mapping keys remain visible beside
-their numbers.
+their numbers. A numbered sequence entry that contains one mapping item uses that mapping key at
+the sequence entry's current path. It does not add a blank synthetic level.
 
 ## Read-only completion markers
 
 `checkboxes=True` places a static visual marker before each trackable node. An unnumbered singleton
 wrapper is structural and does not receive a marker. Each marker is intentionally read-only:
 
-- it starts incomplete on each page load;
+- its initial state comes from `completed_items` or a durable plan source;
 - it is not a form control and cannot receive focus or be toggled;
 - it has no save, storage, or source-update handler;
 - it does not modify JSON, YAML, Python data, or the generated HTML file.
 
-The public API currently renders documents only; it does not provide an update function. For
-durable machine-managed progress, keep JSON or YAML as the source of truth, update that source, and
-regenerate the HTML. The gallery generator demonstrates completed markers as example-only
-presentation state.
+`completed_items` uses complete one-based dotted paths. For example, `1.6.1` does not select
+`1.6.10` or `1.6.1.1`. Direct rendering does not persist marker state. Use the durable plan API
+when an agent must update state after creation.
+
+## Durable plan creation and mutation
+
+`create_hierarchy_plan` creates a canonical JSON plan and a same-named HTML report. It returns the
+resolved JSON path. That path is the stable parameter for every later mutation.
+
+```python
+from mcp_agent_ops.hierarchy import create_hierarchy_plan, update_hierarchy_plan
+
+plan_path = create_hierarchy_plan(
+    {
+        "Delivery plan": {
+            "Discovery": ["Interview users", "Approve scope"],
+            "Implementation": ["Build feature", "Write tests"],
+        }
+    },
+    title="Delivery plan",
+    theme="default",
+    output_filename="delivery-plan.html",
+    output_folder="reports",
+    completed_items=("1.1",),
+)
+
+update_hierarchy_plan(plan_path, "2.1", text="Build approved feature")
+update_hierarchy_plan(plan_path, "Build approved feature", completed=True)
+```
+
+The creation call above writes these files:
+
+```text
+reports/
+├── delivery-plan.json    # Authoritative mutable plan source
+└── delivery-plan.html    # Derived read-only report
+```
+
+The creation signature is:
+
+```python
+create_hierarchy_plan(
+    source,
+    *,
+    title="Hierarchy plan",
+    theme="default",
+    themes_folder=None,
+    output_filename,
+    output_folder=None,
+    completed_items=(),
+)
+```
+
+`output_filename` must be an HTML base filename. The function uses the same base name for the JSON
+source. Initial completed items can use dotted paths or exact unique titles.
+
+### Mutation operations
+
+`update_hierarchy_plan` resolves `target` as an exact one-based dotted path or an exact item title.
+A title that occurs more than once is ambiguous and fails without writing either file. A dotted
+path is evaluated against the current plan, so peer insertion can change later item numbers.
+
+```python
+update_hierarchy_plan(
+    plan_path,
+    target,
+    *,
+    completed=None,
+    text=None,
+    add_child=None,
+    replace_children=None,
+    add_peer_after=None,
+)
+```
+
+Each call must supply exactly one mutation:
+
+| Parameter | Mutation |
+| --- | --- |
+| `completed=True` or `False` | Sets the target item's stored completion state. |
+| `text="..."` | Replaces the target item's displayed text and preserves its children and completion state. |
+| `add_child="..."` | Appends one incomplete child beneath the target. |
+| `replace_children=("...", "...")` | Replaces every child with the supplied ordered incomplete items. An empty sequence removes all children. |
+| `add_peer_after="..."` | Inserts one incomplete sibling immediately after the target. |
+
+After a successful call, the function rewrites the JSON source, regenerates the HTML report with
+its stored title and theme, and returns the resolved JSON path again.
+
+```mermaid
+flowchart LR
+    A["Returned plan JSON path"] --> B["Load and validate plan"]
+    B --> C["Resolve exact path or unique title"]
+    C --> D["Apply one mutation"]
+    D --> E["Regenerate HTML"]
+    E --> F["Rewrite JSON and return its path"]
+```
 
 ## Themes
 
@@ -335,12 +432,15 @@ work.
 | `ValueError` for a cycle | An in-memory container refers to itself through its descendants. | Remove or replace the recursive reference. |
 | `ValueError` for a theme | The theme is not a safe base name or its CSS closes the generated style block. | Rename or correct the CSS file. |
 | `ValueError` for output options | `output_folder` lacks `output_filename`, or the filename includes a directory. | Supply both and keep the directory in `output_folder`. |
+| `ValueError` for a plan target | The dotted path is missing, or the title is missing or ambiguous. | Use the item's current exact path or a unique full title. |
+| `ValueError` for a plan mutation | No mutation or more than one mutation was supplied. | Supply exactly one mutation keyword. |
+| `ValueError` for a plan file | The JSON schema, stored fields, or item values are invalid. | Use the path returned by `create_hierarchy_plan`. |
 
 ## Gallery
 
 The checked-in [hierarchy gallery](../../examples/hierarchy-gallery/README.md) demonstrates:
 
-- a YAML filename with dotted numbering and read-only completion markers;
+- a YAML filename normalized into a durable JSON plan with dotted numbering and completion state;
 - a reviewable [Markdown document outline](../../examples/hierarchy-gallery/data/document-outline.md)
   converted to structured data and rendered with the packaged `outline` theme;
 - full JSON content with the packaged `midnight` theme;
@@ -365,6 +465,7 @@ src/
 └── mcp_agent_ops/
     └── hierarchy/
         ├── __init__.py                 # Public package export
+        ├── plan.py                     # Durable plan creation and exact mutation
         ├── renderer.py                 # Parsing, validation, rendering, and output
         └── themes/
             ├── base.css                # Shared responsive and interaction styles
@@ -374,6 +475,7 @@ src/
 tests/
 ├── unit/
 │   └── hierarchy/
+│       ├── test_plan.py                # Durable plan targeting and mutation
 │       └── test_renderer.py            # API, safety, controls, themes, and output
 └── integration/
     └── examples/
@@ -385,7 +487,8 @@ examples/
         └── blueprint.css               # Caller-owned custom theme example
 ```
 
-The public behavior is implemented in
-[`renderer.py`](../../src/mcp_agent_ops/hierarchy/renderer.py), covered directly by
-[`test_renderer.py`](../../tests/unit/hierarchy/test_renderer.py), and exercised end to end by
-[`test_hierarchy_gallery.py`](../../tests/integration/examples/test_hierarchy_gallery.py).
+Rendering is implemented in [`renderer.py`](../../src/mcp_agent_ops/hierarchy/renderer.py), and
+durable mutation is implemented in [`plan.py`](../../src/mcp_agent_ops/hierarchy/plan.py). The
+unit tests are [`test_renderer.py`](../../tests/unit/hierarchy/test_renderer.py) and
+[`test_plan.py`](../../tests/unit/hierarchy/test_plan.py). The gallery flow is exercised end to end
+by [`test_hierarchy_gallery.py`](../../tests/integration/examples/test_hierarchy_gallery.py).
