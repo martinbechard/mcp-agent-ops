@@ -22,6 +22,35 @@ _THEME_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 _THEMES_ROOT = Path(__file__).resolve().with_name("themes")
 _SCALAR_TYPES = (str, int, float, bool, date, type(None))
 
+_COPY_ICON = (
+    '<svg class="tree-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+    '<rect x="9" y="9" width="11" height="11" rx="2"></rect>'
+    '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>'
+    "</svg>"
+)
+_EXPAND_ICON = (
+    '<svg class="tree-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+    '<path d="m7 6 5 5 5-5"></path><path d="m7 13 5 5 5-5"></path>'
+    "</svg>"
+)
+_COLLAPSE_ICON = (
+    '<svg class="tree-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+    '<path d="m7 18 5-5 5 5"></path><path d="m7 11 5-5 5 5"></path>'
+    "</svg>"
+)
+_COPY_CONTROL = (
+    '<button type="button" data-action="copy" aria-label="Copy content" title="Copy content">'
+    f"{_COPY_ICON}</button>"
+)
+_EXPAND_CONTROL = (
+    '<button type="button" data-action="expand" aria-label="Expand all" title="Expand all">'
+    f"{_EXPAND_ICON}</button>"
+)
+_COLLAPSE_CONTROL = (
+    '<button type="button" data-action="collapse" aria-label="Collapse all" title="Collapse all">'
+    f"{_COLLAPSE_ICON}</button>"
+)
+
 _SCRIPT = """(() => {
   const root = document.querySelector("[data-hierarchy-root]");
   if (!root) return;
@@ -120,7 +149,11 @@ _SCRIPT = """(() => {
   if (copyControl) {
     copyControl.addEventListener("click", async () => {
       const copied = await writePayload(payloadText());
-      copyControl.textContent = copied ? "Copied" : "Copy failed";
+      const copyLabel = copied ? "Copied" : "Copy failed";
+      copyControl.setAttribute("aria-label", copyLabel);
+      copyControl.setAttribute("title", copyLabel);
+      copyControl.classList.toggle("is-success", copied);
+      copyControl.classList.toggle("is-error", !copied);
       if (copyStatus) {
         copyStatus.textContent = copied
           ? "Hierarchy content copied."
@@ -128,7 +161,9 @@ _SCRIPT = """(() => {
       }
       window.clearTimeout(copyResetTimer);
       copyResetTimer = window.setTimeout(() => {
-        copyControl.textContent = "Copy content";
+        copyControl.setAttribute("aria-label", "Copy content");
+        copyControl.setAttribute("title", "Copy content");
+        copyControl.classList.remove("is-success", "is-error");
         if (copyStatus) copyStatus.textContent = "";
       }, 2000);
     });
@@ -414,9 +449,9 @@ def _render_document(
       </div>
       <div class="tree-controls">
         <div class="tree-actions" aria-label="Tree controls">
-          <button type="button" data-action="copy">Copy content</button>
-          <button type="button" data-action="expand">Expand all</button>
-          <button type="button" data-action="collapse">Collapse all</button>
+          {_COPY_CONTROL}
+          {_EXPAND_CONTROL}
+          {_COLLAPSE_CONTROL}
         </div>
         <div class="tree-levels" aria-label="Expand tree to level">
           <span class="tree-level-label">Levels</span>

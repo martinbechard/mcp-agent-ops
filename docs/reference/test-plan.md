@@ -14,8 +14,8 @@
 - Nested source, owner-manifest, owner-evidence, skill-manifest, and adapter-metadata symlink escape rejection, including explicitly allowed secondary skill roots and safe in-project links.
 - Markdown target caching within one verification operation.
 - Hierarchical mapping and sequence rendering, HTML escaping, JSON/YAML content and file input,
-  copy-safe text spacing, complete payload copying, collapse/expand controls, progressive level
-  visibility, dotted one-based numbering, transparent singleton roots, optional read-only
+  copy-safe text spacing, complete payload copying, accessible SVG action controls, progressive
+  level visibility, dotted one-based numbering, transparent singleton roots, optional read-only
   completion markers, packaged and caller-supplied themes, cyclic input rejection, and
   self-contained output-file writing.
 

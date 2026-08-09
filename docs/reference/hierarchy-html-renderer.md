@@ -152,6 +152,8 @@ treated as document content.
 ## Tree controls
 
 Every generated document begins fully expanded and provides two control groups.
+The copy, expand-all, and collapse-all actions use familiar inline SVG icons. Each icon button has
+an accessible name and a matching browser tooltip.
 
 ### Branch and global controls
 
@@ -165,8 +167,9 @@ title and controls. Numbered labels contain a real text-space delimiter, so manu
 copying also produces text such as `1 Purpose and audience`. Completion markers become `[x]` and
 `[ ]` in the copied text.
 
-The copy button briefly displays **Copied** after success. An assistive status message reports the
-same result. If browser clipboard access is unavailable, the document uses a local copy fallback.
+After a successful copy, the copy icon briefly uses the theme accent and its accessible name becomes
+**Copied**. An assistive status message reports the same result. If browser clipboard access is
+unavailable, the document uses a local copy fallback.
 
 ### Progressive level controls
 

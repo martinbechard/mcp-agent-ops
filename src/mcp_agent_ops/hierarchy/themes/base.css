@@ -76,8 +76,32 @@ h1 {
   cursor: pointer;
 }
 
-[data-action="copy"] {
-  min-width: 7.6rem;
+.tree-actions button {
+  display: inline-grid;
+  width: 2.65rem;
+  height: 2.65rem;
+  place-items: center;
+  padding: 0;
+}
+
+.tree-action-icon {
+  width: 1.2rem;
+  height: 1.2rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+[data-action="copy"].is-success {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+[data-action="copy"].is-error {
+  color: var(--number);
+  border-color: var(--number);
 }
 
 .tree-actions button:hover,

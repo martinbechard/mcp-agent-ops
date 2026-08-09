@@ -35,9 +35,10 @@ uv run python examples/hierarchy-gallery/generate_gallery.py
 
 Then open `examples/hierarchy-gallery/build/index.html` in a browser. Each card contains a live,
 collapsible preview, progressive `1`, `2`, `3`, and `All` level controls, and a link to the
-complete self-contained page. Each example also provides **Copy content**, which copies only the
-complete hierarchy as indented plain text. Compare each preview with its Presentation parameters
-callout to see which appearance and interaction options produced it.
+complete self-contained page. Familiar icon controls provide copy, expand-all, and collapse-all
+actions. **Copy content** copies only the complete hierarchy as indented plain text. Compare each
+preview with its Presentation parameters callout to see which appearance and interaction options
+produced it.
 
 To write somewhere else, pass an explicit destination:
 

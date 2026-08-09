@@ -70,13 +70,23 @@ def test_renders_copy_safe_text_and_a_payload_copy_control() -> None:
         '<span class="tree-separator" aria-hidden="true">:</span> '
         '<span class="tree-value type-string">Explain the change.</span></span>' in rendered
     )
-    assert '<button type="button" data-action="copy">Copy content</button>' in rendered
+    for action, label in (
+        ("copy", "Copy content"),
+        ("expand", "Expand all"),
+        ("collapse", "Collapse all"),
+    ):
+        assert f'data-action="{action}" aria-label="{label}" title="{label}"' in rendered
+    assert rendered.count('class="tree-action-icon"') == 3
+    assert rendered.count('aria-hidden="true" focusable="false"') == 3
+    assert ">Copy content</button>" not in rendered
     assert 'class="copy-status" role="status" aria-live="polite"' in rendered
     assert 'navigator.clipboard.writeText(payload)' in rendered
     assert 'document.execCommand("copy")' in rendered
     assert "activeElement.focus()" in rendered
-    assert '[data-action="copy"]' in rendered
-    assert "min-width: 7.6rem" in rendered
+    assert 'copyControl.setAttribute("aria-label", copyLabel)' in rendered
+    assert 'copyControl.classList.toggle("is-success", copied)' in rendered
+    assert "width: 2.65rem" in rendered
+    assert "stroke: currentColor" in rendered
     assert 'lines.join("\\n")' in rendered
     assert '[data-action="expand"], [data-action="collapse"]' in rendered
 
