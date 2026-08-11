@@ -134,9 +134,9 @@ uv run mypy src
 
 ## Hierarchical HTML rendering and durable plans
 
-The package exports `render_hierarchy_html`, a framework-independent Python function for turning
-nested mappings and sequences into responsive, self-contained HTML trees. It accepts in-memory
-data, JSON or YAML text, or an existing `.json`, `.yaml`, or `.yml` file.
+The package and MCP server expose `render_hierarchy_html` for turning nested mappings and sequences
+into responsive, self-contained HTML trees. The operation accepts in-memory data, JSON or YAML
+text, or an existing `.json`, `.yaml`, or `.yml` file.
 
 ```python
 from mcp_agent_ops.hierarchy import render_hierarchy_html
@@ -167,6 +167,11 @@ plan_path = create_hierarchy_plan(
 update_hierarchy_plan(plan_path, "2", add_child="Write focused tests")
 update_hierarchy_plan(plan_path, "Implement", completed=True)
 ```
+
+The MCP server publishes the same three names: `render_hierarchy_html`,
+`create_hierarchy_plan`, and `update_hierarchy_plan`. MCP file and folder paths must be absolute
+and resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`. Creation and update results return the
+resolved JSON plan path so a later agent call can mutate the same plan.
 
 See the [complete hierarchical HTML renderer reference](docs/reference/hierarchy-html-renderer.md)
 for rendering, durable plan creation, exact item targeting, mutations, numbering, read-only browser

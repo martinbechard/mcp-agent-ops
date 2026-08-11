@@ -3,7 +3,7 @@
 The project uses a domain-and-adapter structure.
 
 ```text
-MCP host -> FastMCP adapter -> domain service -> Git repository / reference and skill roots
+MCP host -> FastMCP adapter -> domain service -> Git repository / hierarchy files / reference and skill roots
 CLI user -> CLI adapter -----^
 ```
 
@@ -19,18 +19,21 @@ CLI user -> CLI adapter -----^
 
 No domain module depends on FastMCP. Adapters translate typed requests to domain calls and translate domain results to stable structured responses.
 
-The `hierarchy` package is a direct Python API rather than an MCP or CLI capability. The renderer
-accepts in-memory data or an explicitly selected JSON/YAML file, reads packaged or caller-selected
-CSS, and optionally writes one HTML document. Source values are validated and HTML-escaped before
-rendering. Theme names and output filenames are base names, so nested path authority remains with
-the explicit source, themes-folder, and output-folder parameters.
+The `hierarchy` package is a framework-independent Python API. The FastMCP adapter exposes the same
+render, create, and update operations as MCP tools. The adapter translates JSON-safe inputs and
+resolves every model-supplied source, theme, output, and plan path beneath configured workspace
+roots. The renderer accepts in-memory data or an explicitly selected JSON/YAML file. It reads
+packaged or caller-selected CSS and can write one HTML document. Source values are validated and
+HTML-escaped before rendering. Theme names and output filenames are base names, so path authority
+remains with the explicit source, themes-folder, and output-folder parameters.
 
 Durable plan creation normalizes hierarchy input into a same-named JSON source and HTML rendering.
 The JSON file stores ordered item text, completion state, children, and presentation parameters.
 Mutation resolves one item by an exact dotted path or an exact unique title, applies one requested
 change, rewrites the JSON source, and regenerates the HTML. Dotted paths are parsed by component;
 they are not matched as text prefixes. The JSON source remains authoritative, while HTML remains a
-derived read-only report.
+derived read-only report. Before an MCP mutation, the adapter reauthorizes any custom-theme folder
+stored in the plan because another process can edit the JSON source after creation.
 
 ## Claim compatibility
 
@@ -68,7 +71,18 @@ One reference snapshot is built lazily per server process. The snapshot pairs ag
 
 ## Filesystem boundaries
 
-The host configures separate user reference roots, user skill roots, and workspace roots. Automatic project scopes are accepted only when the process working directory is beneath an allowed workspace. The reference allowlist prevents arbitrary working-project files from becoming model-readable. Every reference candidate must resolve beneath its selected scope and must be a regular UTF-8 file. Model-supplied repository, project, verification, validation, and worktree paths are resolved only beneath their boundaries after symlink resolution. Skill validation and technology detection repeat containment at each nested read boundary. Model-facing reference, catalog, validation, and detection results omit configured host paths; `skill_find` is the narrow operation that intentionally returns one selected manifest path. The boundary is reproducibility and host-state protection for ordinary agent work; it is not a general hostile-code sandbox.
+The host configures separate user reference roots, user skill roots, and workspace roots. Automatic
+project scopes are accepted only when the process working directory is beneath an allowed
+workspace. The reference allowlist prevents arbitrary working-project files from becoming
+model-readable. Every reference candidate must resolve beneath its selected scope and must be a
+regular UTF-8 file. Model-supplied repository, project, verification, validation, worktree,
+hierarchy source, theme, output, and plan paths are resolved only beneath their boundaries after
+symlink resolution. Skill validation and technology detection repeat containment at each nested
+read boundary. Model-facing reference, catalog, validation, and detection results omit configured
+host paths; `skill_find` is the narrow operation that intentionally returns one selected manifest
+path. Hierarchy tools return resolved output and plan paths because later agent calls use those
+paths as mutation inputs. The boundary is reproducibility and host-state protection for ordinary
+agent work; it is not a general hostile-code sandbox.
 
 ## Transport
 

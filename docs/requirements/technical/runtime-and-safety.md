@@ -3,11 +3,14 @@
 - Support Python 3.11 through 3.13.
 - Pin FastMCP exactly and commit the resolved dependency lock.
 - Keep the domain layer importable without FastMCP initialization.
-- Treat model-supplied repository, project, worktree, validation, requested resource paths, and reference names as untrusted filesystem inputs.
+- Treat model-supplied repository, project, worktree, validation, hierarchy source, theme, output,
+  and plan paths, requested resource paths, and reference names as untrusted filesystem inputs.
 - Reject symbolic-link hierarchy-plan sources and outputs before mutation.
 - Resolve dotted hierarchy targets by complete one-based path components, never by text-prefix matching.
 - Require administrator-configured workspace and skill roots before resolving model-supplied paths.
 - Require model-supplied workspace and skill paths to be absolute and contained after symlink resolution.
+- Resolve every hierarchy MCP file or folder path beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS` before domain access or mutation.
+- Reauthorize a durable plan's stored custom-theme folder before each MCP mutation.
 - Recheck every nested skill manifest, adapter metadata file, technology source, owner manifest, owner-evidence file, and resource at its read boundary.
 - Require an administrator-configured allowlist before a direct project reference file becomes model-readable.
 - Reject unsafe reference names, non-files, non-UTF-8 content, and reference symlinks that escape their selected scope.

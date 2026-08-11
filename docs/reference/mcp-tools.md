@@ -71,6 +71,28 @@ Verification results contain `ok`, `checked_files`, and structured `findings`. T
 
 `repository_root` must be absolute and resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`.
 
+## Hierarchy
+
+Hierarchy tools render inline or file-backed JSON/YAML data and maintain durable agent plans.
+
+| Tool | Required arguments | Purpose |
+|---|---|---|
+| `render_hierarchy_html` | `source` | Return self-contained HTML or save it when `output_filename` is supplied. |
+| `create_hierarchy_plan` | `source`, `output_filename` | Write a same-named JSON plan and HTML report, then return the JSON path. |
+| `update_hierarchy_plan` | `plan_path`, `target`, exactly one mutation | Update one item, rewrite the JSON plan, regenerate the HTML report, and return the JSON path. |
+
+`render_hierarchy_html` accepts optional `title`, `theme`, `themes_folder`, `numbering`,
+`checkboxes`, `completed_items`, `output_filename`, and `output_folder` arguments.
+`create_hierarchy_plan` accepts the same presentation and completion arguments except `numbering`
+and `checkboxes`, which durable plans always enable. `update_hierarchy_plan` requires exactly one
+of `completed`, `text`, `add_child`, `replace_children`, or `add_peer_after`.
+
+Inline mappings, sequences, JSON, and YAML require no filesystem path. A model-supplied source
+path, custom theme folder, output folder, or plan path must be absolute and resolve beneath
+`MCP_AGENT_OPS_WORKSPACE_ROOTS`. A write call without `output_folder` uses the authorized server
+project directory. Render returns complete HTML when it does not write a file. Every file-writing
+result is the resolved output or JSON plan path.
+
 ## Reference Data
 
 Reference tools return allowlisted text from the active immutable snapshot.

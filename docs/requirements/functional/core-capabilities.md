@@ -55,7 +55,8 @@
 
 ## Hierarchical Plans
 
-- The direct Python API renders supported hierarchy input as self-contained themed HTML.
+- The Python API and `render_hierarchy_html` MCP tool render supported hierarchy input as self-contained themed HTML.
+- The MCP server exposes durable plan creation and mutation through `create_hierarchy_plan` and `update_hierarchy_plan`.
 - Durable plan creation writes a same-named JSON source and HTML report, then returns the JSON path.
 - Plan mutation targets one item by an exact dotted path or exact unique title.
 - One mutation call can change completion, replace text, add a child, replace all children, or add a peer after the target.

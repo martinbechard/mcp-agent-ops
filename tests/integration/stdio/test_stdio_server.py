@@ -17,7 +17,7 @@ from fastmcp.exceptions import ToolError
 
 
 async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: Path) -> None:
-    """Exercise the advertised skill and reference snapshot contracts through stdio."""
+    """Exercise advertised hierarchy, skill, and reference contracts through stdio."""
     skill = tmp_path / "skills" / "example"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text(
@@ -55,6 +55,9 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
         assert "reference_refresh" in names
         assert "claim_extend_deadline" in names
         assert "claim_reset" in names
+        assert "render_hierarchy_html" in names
+        assert "create_hierarchy_plan" in names
+        assert "update_hierarchy_plan" in names
         acquire = next(tool for tool in tools if tool.name == "claim_acquire")
         assert {
             "project_files",
@@ -71,6 +74,37 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
         assert {"disposition", "blocker_reference"} <= set(release.inputSchema["properties"])
         assert "no_change" not in release.inputSchema["properties"]
         assert "work_item_id" in (acquire.description or "")
+        rendered = await client.call_tool(
+            "render_hierarchy_html",
+            {
+                "source": {"Outline": ["Purpose", "Scope"]},
+                "title": "Stdio outline",
+                "numbering": True,
+            },
+        )
+        assert rendered.structured_content["result"].startswith("<!doctype html>")
+        created = await client.call_tool(
+            "create_hierarchy_plan",
+            {
+                "source": {"Delivery plan": ["Prepare", "Release"]},
+                "output_filename": "stdio-plan.html",
+                "output_folder": str(tmp_path),
+            },
+        )
+        plan_path = (tmp_path / "stdio-plan.json").resolve()
+        assert created.structured_content["result"] == str(plan_path)
+        updated = await client.call_tool(
+            "update_hierarchy_plan",
+            {
+                "plan_path": str(plan_path),
+                "target": "1",
+                "completed": True,
+            },
+        )
+        assert updated.structured_content["result"] == str(plan_path)
+        assert 'aria-label="1 complete"' in (tmp_path / "stdio-plan.html").read_text(
+            encoding="utf-8"
+        )
         result = await client.call_tool("skill_read", {"name": "example"})
         assert result.structured_content["name"] == "example"
         assert "entry" not in result.structured_content
@@ -111,10 +145,15 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
     audit = (tmp_path / "mcp-audit.jsonl").read_text(encoding="utf-8")
     assert '"tool":"skill_load"' in audit
     assert '"tool":"reference_load"' in audit
+    assert '"tool":"render_hierarchy_html"' in audit
+    assert '"tool":"create_hierarchy_plan"' in audit
+    assert '"tool":"update_hierarchy_plan"' in audit
     assert '"status":"completed"' in audit
     assert '"outcome"' not in audit
     assert "Stdio example" not in audit
     assert "vocabulary" not in audit
+    assert "Stdio outline" not in audit
+    assert "stdio-plan.json" not in audit
 
 
 async def test_real_stdio_servers_share_one_session_bound_audit(tmp_path: Path) -> None:

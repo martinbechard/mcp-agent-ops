@@ -42,10 +42,12 @@
 - Published MCP tool names and bounded input/output schemas, including work-item fields, resource
   timing, deadline extension, release disposition, reset, all three broad claim domains, aggregated
   reference loading, precedence-resolved skill path lookup, optional extension switches,
-  validation by name or absolute path, batch loading, and explicit refresh.
+  validation by name or absolute path, batch loading, explicit refresh, hierarchy rendering, and
+  durable hierarchy-plan creation and mutation.
 - In-memory calls for each capability group and immutable catalog reuse across repeated calls.
 - CLI and MCP parity for the canonical registry path and structured migration stops.
-- Rejection of repository, worktree, verification, validation, and detection paths outside configured roots.
+- Rejection of repository, worktree, verification, validation, detection, hierarchy, and persisted
+  hierarchy-theme paths outside configured roots.
 - Path-free reference and skill catalog errors plus path-free skill-validation and technology-detection results.
 - Digest-only tool audit lifecycle, exclusive audit-root confinement, safe shared parent and subagent streams, content omission, and real stdio evidence.
 - Skill catalog and skill-content MCP resources.
@@ -58,7 +60,9 @@
   presentation-only parameter callouts.
 - Simultaneous claim processes cannot both acquire primary ownership.
 - Overlapping concurrent claims produce one safe owner and one wait outcome.
-- A real stdio subprocess initializes, advertises current work-item, deadline, release, reset, and broad-domain schemas, lists tools and resources, preserves reference and skill snapshots until explicit refresh, and shuts down cleanly.
+- A real stdio subprocess initializes, advertises current work-item, deadline, release, reset,
+  broad-domain, and hierarchy tools, invokes all three hierarchy operations, preserves reference
+  and skill snapshots until explicit refresh, and shuts down cleanly.
 - Windows CI runs the complete claim compatibility suite plus a real stdio subprocess; evaluator-only shared audit remains on its documented POSIX boundary.
 
 ## Release gates

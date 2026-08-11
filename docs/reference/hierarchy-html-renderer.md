@@ -2,7 +2,7 @@
 
 `render_hierarchy_html` turns a mapping or sequence into a responsive, self-contained HTML tree.
 `create_hierarchy_plan` and `update_hierarchy_plan` add durable, agent-managed plan state. These
-functions are direct Python APIs. They are not MCP tools or CLI commands.
+functions are direct Python APIs and MCP tools. They are not CLI commands.
 
 The function produces a standalone document. The document embeds its CSS and JavaScript. It
 escapes source labels and values and preserves source order. The function can return the complete
@@ -47,6 +47,42 @@ saved_path = render_hierarchy_html(
 
 The destination folder is created when needed, and `saved_path` is the resolved `Path` to the
 written file.
+
+## MCP tools
+
+The MCP server publishes the three hierarchy functions under their Python names.
+
+| Tool | Required arguments | Result |
+|---|---|---|
+| `render_hierarchy_html` | `source` | Complete HTML, or the resolved HTML path when `output_filename` is supplied. |
+| `create_hierarchy_plan` | `source`, `output_filename` | Resolved JSON plan path. |
+| `update_hierarchy_plan` | `plan_path`, `target`, and exactly one mutation argument | Resolved JSON plan path after JSON and HTML regeneration. |
+
+MCP calls can supply an inline mapping, sequence, JSON string, or YAML string as `source`. A source
+file path, custom `themes_folder`, `output_folder`, or `plan_path` must be absolute. Each path must
+resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`. If a write call omits `output_folder`, the server
+uses its authorized project directory.
+
+The following arguments create a durable plan:
+
+```json
+{
+  "source": {"Delivery plan": ["Discover", "Implement", "Release"]},
+  "title": "Delivery plan",
+  "output_filename": "delivery-plan.html",
+  "output_folder": "/workspace/project/reports"
+}
+```
+
+Pass the returned JSON path to `update_hierarchy_plan`:
+
+```json
+{
+  "plan_path": "/workspace/project/reports/delivery-plan.json",
+  "target": "2",
+  "add_child": "Write focused tests"
+}
+```
 
 ## Rendering flow
 

@@ -110,6 +110,9 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
             "claim_report",
             "verify_yaml",
             "verify_markdown_links",
+            "render_hierarchy_html",
+            "create_hierarchy_plan",
+            "update_hierarchy_plan",
             "reference_load",
             "reference_refresh",
             "skill_list",
@@ -389,6 +392,238 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
         assert resources.structured_content["resources"][0]["content"] == "supporting guide\n"
         validation = await client.call_tool("skill_validate", {"paths": [str(skills / "example")]})
         assert validation.structured_content["ok"] is True
+
+
+async def test_server_exposes_workspace_safe_hierarchy_tools(tmp_path: Path) -> None:
+    """Exercise all hierarchy tool schemas, results, mutations, and path boundaries."""
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    workspace_source = workspace / "outline.yaml"
+    workspace_source.write_text("Outline:\n  - Purpose\n", encoding="utf-8")
+    outside_source = outside / "outline.yaml"
+    outside_source.write_text("Outline:\n  - Hidden\n", encoding="utf-8")
+    server = create_server(
+        skill_roots=[],
+        workspace_roots=[workspace],
+        project_root=workspace,
+    )
+
+    async with Client(server) as client:
+        tools = {tool.name: tool for tool in await client.list_tools()}
+        assert set(tools["render_hierarchy_html"].inputSchema["properties"]) == {
+            "source",
+            "title",
+            "theme",
+            "themes_folder",
+            "numbering",
+            "checkboxes",
+            "completed_items",
+            "output_filename",
+            "output_folder",
+        }
+        assert set(tools["create_hierarchy_plan"].inputSchema["properties"]) == {
+            "source",
+            "title",
+            "theme",
+            "themes_folder",
+            "output_filename",
+            "output_folder",
+            "completed_items",
+        }
+        assert set(tools["update_hierarchy_plan"].inputSchema["properties"]) == {
+            "plan_path",
+            "target",
+            "completed",
+            "text",
+            "add_child",
+            "replace_children",
+            "add_peer_after",
+        }
+        assert set(tools["render_hierarchy_html"].inputSchema["required"]) == {
+            "source"
+        }
+        assert set(tools["create_hierarchy_plan"].inputSchema["required"]) == {
+            "source",
+            "output_filename",
+        }
+        assert set(tools["update_hierarchy_plan"].inputSchema["required"]) == {
+            "plan_path",
+            "target",
+        }
+        for tool_name in (
+            "render_hierarchy_html",
+            "create_hierarchy_plan",
+            "update_hierarchy_plan",
+        ):
+            assert tools[tool_name].outputSchema["properties"]["result"]["type"] == "string"
+
+        rendered = await client.call_tool(
+            "render_hierarchy_html",
+            {
+                "source": {"Outline": ["Purpose", "Scope"]},
+                "title": "Document outline",
+                "numbering": True,
+            },
+        )
+        assert rendered.structured_content["result"].startswith("<!doctype html>")
+        assert "Document outline" in rendered.structured_content["result"]
+
+        saved = await client.call_tool(
+            "render_hierarchy_html",
+            {
+                "source": str(workspace_source),
+                "output_filename": "outline.html",
+            },
+        )
+        assert saved.structured_content["result"] == str(
+            (workspace / "outline.html").resolve()
+        )
+
+        created = await client.call_tool(
+            "create_hierarchy_plan",
+            {
+                "source": {"Delivery plan": ["Prepare", "Release"]},
+                "title": "Delivery plan",
+                "output_filename": "delivery-plan.html",
+                "completed_items": ["1"],
+            },
+        )
+        plan_path = (workspace / "delivery-plan.json").resolve()
+        assert created.structured_content["result"] == str(plan_path)
+        assert plan_path.is_file()
+
+        updated = await client.call_tool(
+            "update_hierarchy_plan",
+            {
+                "plan_path": str(plan_path),
+                "target": "2",
+                "add_child": "Publish wheel",
+            },
+        )
+        assert updated.structured_content["result"] == str(plan_path)
+        html = (workspace / "delivery-plan.html").read_text(encoding="utf-8")
+        assert "Publish wheel" in html
+        assert 'aria-label="1 complete"' in html
+        with pytest.raises(ToolError, match="requires exactly one mutation"):
+            await client.call_tool(
+                "update_hierarchy_plan",
+                {
+                    "plan_path": str(plan_path),
+                    "target": "1",
+                    "completed": True,
+                    "text": "Changed",
+                },
+            )
+        plan_payload = json.loads(plan_path.read_text(encoding="utf-8"))
+        plan_payload["themesFolder"] = str(outside)
+        plan_path.write_text(json.dumps(plan_payload), encoding="utf-8")
+        with pytest.raises(ToolError, match="outside configured workspace roots"):
+            await client.call_tool(
+                "update_hierarchy_plan",
+                {
+                    "plan_path": str(plan_path),
+                    "target": "1",
+                    "completed": False,
+                },
+            )
+
+        for tool_name, arguments in (
+            (
+                "render_hierarchy_html",
+                {"source": str(outside_source)},
+            ),
+            (
+                "render_hierarchy_html",
+                {
+                    "source": {"Outline": ["Purpose"]},
+                    "theme": "custom",
+                    "themes_folder": str(outside),
+                },
+            ),
+            (
+                "render_hierarchy_html",
+                {
+                    "source": {"Outline": ["Purpose"]},
+                    "output_filename": "outline.html",
+                    "output_folder": str(outside),
+                },
+            ),
+            (
+                "create_hierarchy_plan",
+                {
+                    "source": {"Plan": ["Prepare"]},
+                    "output_filename": "plan.html",
+                    "output_folder": str(outside),
+                },
+            ),
+            (
+                "update_hierarchy_plan",
+                {
+                    "plan_path": str(outside / "plan.json"),
+                    "target": "1",
+                    "completed": True,
+                },
+            ),
+        ):
+            with pytest.raises(ToolError, match="outside configured workspace roots"):
+                await client.call_tool(tool_name, arguments)
+
+
+async def test_shared_audit_records_bounded_hierarchy_outcomes(tmp_path: Path) -> None:
+    """Record hierarchy lifecycle outcomes without retaining content or filesystem paths."""
+    workspace = tmp_path / "workspace"
+    evidence = tmp_path / "evidence"
+    workspace.mkdir()
+    evidence.mkdir()
+    audit_log = evidence / "mcp-audit.jsonl"
+    server = create_server(
+        skill_roots=[],
+        workspace_roots=[workspace],
+        project_root=workspace,
+        audit_log=audit_log,
+        audit_roots=[evidence],
+        audit_shared=True,
+        audit_session_id="a" * 32,
+    )
+
+    async with Client(server) as client:
+        await client.call_tool(
+            "render_hierarchy_html",
+            {"source": {"Private marker": ["Do not retain"]}},
+        )
+        created = await client.call_tool(
+            "create_hierarchy_plan",
+            {
+                "source": {"Plan": ["Private task"]},
+                "output_filename": "private-plan.html",
+            },
+        )
+        await client.call_tool(
+            "update_hierarchy_plan",
+            {
+                "plan_path": created.structured_content["result"],
+                "target": "1",
+                "completed": True,
+            },
+        )
+
+    audit = audit_log.read_text(encoding="utf-8")
+    terminal = [
+        (record["tool"], record["outcome"])
+        for record in (json.loads(line) for line in audit.splitlines())
+        if record["status"] == "completed"
+    ]
+    assert terminal == [
+        ("render_hierarchy_html", "RENDERED"),
+        ("create_hierarchy_plan", "CREATED"),
+        ("update_hierarchy_plan", "UPDATED"),
+    ]
+    assert "Private marker" not in audit
+    assert "Private task" not in audit
+    assert "private-plan.json" not in audit
+    assert str(workspace) not in audit
 
 
 async def test_claim_mcp_and_cli_share_state_path_and_migration_stop(tmp_path: Path) -> None:

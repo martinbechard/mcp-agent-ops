@@ -249,6 +249,12 @@ def _safe_outcome(tool: str, result: ToolResult) -> str | None:
         if ok is True and isinstance(checked_files, list) and not checked_files:
             return "EMPTY"
         return "OK" if ok is True else "FINDINGS" if ok is False else None
+    if tool == "render_hierarchy_html":
+        return "RENDERED"
+    if tool == "create_hierarchy_plan":
+        return "CREATED"
+    if tool == "update_hierarchy_plan":
+        return "UPDATED"
     if tool in {"skill_list", "skill_refresh"}:
         skills = structured.get("skills")
         if isinstance(skills, list):

@@ -1,9 +1,10 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Publishes typed FastMCP operations with safe project skill and reference overlays.
+# Summary: Publishes typed FastMCP operations with safe hierarchy, project skill, and reference paths.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
+import json
 import os
 import threading
 from collections.abc import Sequence
@@ -16,6 +17,13 @@ from pydantic import Field
 
 from mcp_agent_ops.adapters.mcp.audit import ToolAuditLog, ToolAuditMiddleware
 from mcp_agent_ops.claims.service import ClaimCommandResult, run_claim_command
+from mcp_agent_ops.hierarchy import (
+    create_hierarchy_plan as create_hierarchy_plan_domain,
+)
+from mcp_agent_ops.hierarchy import render_hierarchy_html as render_hierarchy_html_domain
+from mcp_agent_ops.hierarchy import (
+    update_hierarchy_plan as update_hierarchy_plan_domain,
+)
 from mcp_agent_ops.reference_data.catalog import ReferenceCatalog
 from mcp_agent_ops.reference_data.models import (
     PublishedReferenceCatalog,
@@ -50,9 +58,11 @@ AUDITED_TOOL_NAMES = frozenset({
     "claim_report",
     "claim_reset",
     "claim_status",
+    "create_hierarchy_plan",
     "detect_technology_skills",
     "reference_load",
     "reference_refresh",
+    "render_hierarchy_html",
     "skill_find",
     "skill_list",
     "skill_load",
@@ -61,6 +71,7 @@ AUDITED_TOOL_NAMES = frozenset({
     "skill_refresh",
     "skill_resource_load",
     "skill_validate",
+    "update_hierarchy_plan",
     "verify_markdown_links",
     "verify_yaml",
 })
@@ -287,9 +298,10 @@ def create_server(
     Returns:
         A FastMCP server ready for in-memory testing or stdio execution.
 
-    Claim tools mutate target Git-global claim state. Verification, skill, and reference
-    operations are read-only. Catalog and detection snapshots improve reads but never
-    replace disk-authoritative claim, skill, or reference state.
+    Claim tools mutate target Git-global claim state. Hierarchy tools may write HTML and
+    durable JSON plans beneath configured workspace roots. Verification, skill, and
+    reference operations are read-only. Catalog and detection snapshots improve reads but
+    never replace disk-authoritative claim, skill, or reference state.
     """
     roots = list(skill_roots) if skill_roots is not None else configured_skill_roots()
     configured_references = (
@@ -396,6 +408,53 @@ def create_server(
 
     def workspace_path(value: str) -> Path:
         return resolve_within_roots(workspaces, value, "workspace")
+
+    def hierarchy_source(value: object) -> object:
+        """Resolve an explicit hierarchy source path without confusing inline JSON or YAML."""
+        if not isinstance(value, str):
+            return value
+        stripped = value.strip()
+        if (
+            not stripped
+            or "\n" in value
+            or "\r" in value
+            or stripped.startswith(("{", "["))
+        ):
+            return value
+        candidate = Path(value).expanduser()
+        if candidate.is_absolute():
+            return workspace_path(value)
+        try:
+            is_existing_path = candidate.exists() or candidate.is_symlink()
+        except OSError:
+            is_existing_path = False
+        if is_existing_path:
+            raise ValueError(
+                "Hierarchy source file paths supplied through MCP must be absolute "
+                "within configured workspace roots."
+            )
+        return value
+
+    def hierarchy_output_folder(value: str | None, *, required: bool) -> Path | None:
+        """Resolve an explicit output folder or the server project when a write is required."""
+        if value is not None:
+            return workspace_path(value)
+        if required:
+            return workspace_path(str(active_project_root))
+        return None
+
+    def hierarchy_plan_path(value: str) -> Path:
+        """Authorize a plan and any valid stored custom-theme path before domain access."""
+        plan_path = workspace_path(value)
+        try:
+            payload = json.loads(plan_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return plan_path
+        if isinstance(payload, dict):
+            themes_folder = payload.get("themesFolder")
+            if isinstance(themes_folder, str):
+                workspace_path(themes_folder)
+        return plan_path
 
     def skill_path(value: str) -> Path:
         return resolve_within_roots(catalog_roots, value, "skill")
@@ -641,6 +700,158 @@ def create_server(
                 "json",
             ]
         )
+
+    @mcp.tool
+    def render_hierarchy_html(
+        source: object,
+        title: str = "Hierarchy",
+        theme: str = "default",
+        themes_folder: str | None = None,
+        numbering: bool = False,
+        checkboxes: bool = False,
+        completed_items: list[str] | None = None,
+        output_filename: str | None = None,
+        output_folder: str | None = None,
+    ) -> str:
+        """Render safe self-contained hierarchy HTML and optionally save it.
+
+        Inline mappings, sequences, JSON, and YAML require no filesystem access. An
+        explicit source path, custom theme folder, or output folder must be absolute and
+        resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`. When a filename is supplied
+        without an output folder, the authorized server project directory is used.
+
+        Args:
+            source: Inline mapping, sequence, JSON, YAML, or an absolute JSON/YAML path.
+            title: Browser and page title.
+            theme: Packaged or custom theme base name without `.css`.
+            themes_folder: Absolute folder for a custom theme, or null for packaged themes.
+            numbering: Add one-based dotted hierarchy numbers.
+            checkboxes: Add read-only completion markers.
+            completed_items: Exact dotted paths rendered as complete; requires checkboxes.
+            output_filename: Optional base HTML filename without a directory.
+            output_folder: Optional absolute destination beneath a configured workspace.
+
+        Returns:
+            Complete HTML when `output_filename` is absent, otherwise the resolved saved
+            HTML path.
+
+        Raises:
+            ValueError: If a path escapes its workspace, inputs conflict, or rendering fails.
+
+        Side effects:
+            Reads an authorized source or custom theme and writes one HTML file when selected.
+        """
+        resolved_output_folder = hierarchy_output_folder(
+            output_folder,
+            required=output_filename is not None,
+        )
+        result = render_hierarchy_html_domain(
+            hierarchy_source(source),
+            title=title,
+            theme=theme,
+            themes_folder=(
+                workspace_path(themes_folder) if themes_folder is not None else None
+            ),
+            numbering=numbering,
+            checkboxes=checkboxes,
+            completed_items=completed_items or [],
+            output_filename=output_filename,
+            output_folder=resolved_output_folder,
+        )
+        return str(result)
+
+    @mcp.tool
+    def create_hierarchy_plan(
+        source: object,
+        output_filename: str,
+        title: str = "Hierarchy plan",
+        theme: str = "default",
+        themes_folder: str | None = None,
+        output_folder: str | None = None,
+        completed_items: list[str] | None = None,
+    ) -> str:
+        """Create a durable hierarchy JSON plan and its same-named HTML rendering.
+
+        Source and theme paths must be absolute beneath configured workspace roots. The
+        output folder follows the same boundary and defaults to the authorized server
+        project directory.
+
+        Args:
+            source: Inline mapping, sequence, JSON, YAML, or an absolute JSON/YAML path.
+            output_filename: Base HTML filename; the JSON plan uses the same base name.
+            title: Browser and page title.
+            theme: Packaged or custom theme base name without `.css`.
+            themes_folder: Absolute folder for a custom theme, or null for packaged themes.
+            output_folder: Optional absolute destination beneath a configured workspace.
+            completed_items: Exact dotted paths or unique titles initially marked complete.
+
+        Returns:
+            Resolved JSON plan path for later `update_hierarchy_plan` calls.
+
+        Raises:
+            ValueError: If a path escapes its workspace or plan creation fails.
+
+        Side effects:
+            Reads an authorized source or theme and writes one JSON file plus one HTML file.
+        """
+        result = create_hierarchy_plan_domain(
+            hierarchy_source(source),
+            title=title,
+            theme=theme,
+            themes_folder=(
+                workspace_path(themes_folder) if themes_folder is not None else None
+            ),
+            output_filename=output_filename,
+            output_folder=hierarchy_output_folder(output_folder, required=True),
+            completed_items=completed_items or [],
+        )
+        return str(result)
+
+    @mcp.tool
+    def update_hierarchy_plan(
+        plan_path: str,
+        target: str,
+        completed: bool | None = None,
+        text: str | None = None,
+        add_child: str | None = None,
+        replace_children: list[str] | None = None,
+        add_peer_after: str | None = None,
+    ) -> str:
+        """Apply exactly one targeted plan mutation and regenerate its HTML rendering.
+
+        The plan path must be absolute beneath configured workspace roots. The target is
+        an exact dotted hierarchy number or an exact unique title. Supply exactly one of
+        `completed`, `text`, `add_child`, `replace_children`, or `add_peer_after`.
+
+        Args:
+            plan_path: Absolute JSON plan path returned by `create_hierarchy_plan`.
+            target: Exact dotted path or exact unique item title.
+            completed: Replacement completion state.
+            text: Replacement item text.
+            add_child: Text for one appended child.
+            replace_children: Ordered replacement child texts; an empty list removes all.
+            add_peer_after: Text for one peer inserted immediately after the target.
+
+        Returns:
+            Resolved JSON plan path after both durable files are rewritten.
+
+        Raises:
+            ValueError: If the path escapes its workspace, the target is invalid, or the
+                call supplies other than one mutation.
+
+        Side effects:
+            Rewrites one authorized JSON plan and regenerates its same-named HTML report.
+        """
+        result = update_hierarchy_plan_domain(
+            hierarchy_plan_path(plan_path),
+            target,
+            completed=completed,
+            text=text,
+            add_child=add_child,
+            replace_children=replace_children,
+            add_peer_after=add_peer_after,
+        )
+        return str(result)
 
     @mcp.tool
     def verify_yaml(repository_root: str, paths: list[str]) -> VerificationReport:
