@@ -647,7 +647,7 @@ wheels = [
 
 [[package]]
 name = "mcp-agent-ops"
-version = "0.9.1"
+version = "0.10.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
