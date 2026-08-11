@@ -4,7 +4,7 @@
 - Pin FastMCP exactly and commit the resolved dependency lock.
 - Keep the domain layer importable without FastMCP initialization.
 - Treat model-supplied repository, project, worktree, validation, hierarchy source, theme, output,
-  and plan paths, requested resource paths, and reference names as untrusted filesystem inputs.
+  and plan paths, requested resource paths, and relative reference paths as untrusted filesystem inputs.
 - Reject symbolic-link hierarchy-plan sources and outputs before mutation.
 - Resolve dotted hierarchy targets by complete one-based path components, never by text-prefix matching.
 - Require administrator-configured workspace and skill roots before resolving model-supplied paths.
@@ -12,8 +12,8 @@
 - Resolve every hierarchy MCP file or folder path beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS` before domain access or mutation.
 - Reauthorize a durable plan's stored custom-theme folder before each MCP mutation.
 - Recheck every nested skill manifest, adapter metadata file, technology source, owner manifest, owner-evidence file, and resource at its read boundary.
-- Require an administrator-configured allowlist before a direct project reference file becomes model-readable.
-- Reject unsafe reference names, non-files, non-UTF-8 content, and reference symlinks that escape their selected scope.
+- Publish project references only beneath conventional agent and skill folders when the working project is authorized.
+- Reject unsafe relative reference paths and omit non-files, non-UTF-8 content, and reference symlinks that escape their selected folder.
 - Reject nested paths that escape their configured roots through symlinks and omit configured host paths from model-facing diagnostics.
 - Preserve atomic in-place claim registry writes under an exclusive operating-system lock applied directly to the stable registry file.
 - Support claim coordination and ordinary stdio MCP operation on POSIX and Windows without a compatibility subsystem.

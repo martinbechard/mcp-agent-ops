@@ -6,7 +6,7 @@ The service owns six capability groups:
 
 - repository claims, worktree isolation, event journaling, archival, and contention reporting;
 - reusable YAML and Markdown verification operations;
-- allowlisted reference-data aggregation across project and user scopes;
+- recursive reference-data aggregation across authorized project and user folders;
 - snapshot-based discovery and extension-aware batched loading of installed Agent Skills;
 - Agent Skill validation; and
 - evidence-based technology-skill detection.
@@ -200,8 +200,7 @@ mcp-agent-ops
 The server uses stdio by default. Configure these boundaries before exposing it to an agent:
 
 - `MCP_AGENT_OPS_SKILL_ROOTS` contains precedence-ordered readable skill roots, separated by the operating system path separator. A root may contain child skill directories or may be one exact skill directory containing `SKILL.md`.
-- `MCP_AGENT_OPS_REFERENCE_ROOTS` contains ordered user reference roots, separated by the operating system path separator. Reference discovery checks only direct files in each root.
-- `MCP_AGENT_OPS_REFERENCE_NAMES` contains the exact model-readable direct filenames, separated by the operating system path separator. Names must not contain traversal, directory separators, or a leading dot.
+- `MCP_AGENT_OPS_REFERENCE_ROOTS` contains ordered readable user folders, separated by the operating system path separator. Every UTF-8 file beneath a configured folder is available by relative path.
 - `MCP_AGENT_OPS_DETECTION_REGISTRY` identifies the trusted methodology-owned technology registry.
 - `MCP_AGENT_OPS_WORKSPACE_ROOTS` contains allowed project and worktree roots, separated by the operating system path separator.
 
@@ -212,7 +211,7 @@ When the server starts with its working directory beneath a configured workspace
 order for `python.extension` and appends that complete skill when found. The base and extension
 resolve independently, so either one can come from a project or configured user root.
 
-For each allowlisted reference name, the server checks `<cwd>/<name>` and then each configured reference root. It includes the working-directory file only when `<cwd>` is beneath an allowed workspace. The server aggregates every direct match in search order with one newline between sources. It does not search subdirectories or apply skill-style shadowing. `reference_refresh` rescans all reference scopes.
+When the working directory is beneath an allowed workspace, the server recursively publishes files beneath `<cwd>/.agents` and `<cwd>/.codex/skills` before files beneath the configured user reference folders. The server aggregates every matching relative path in search order with one newline between sources. Traversal and symlinks that resolve outside their selected folder are not published. `reference_refresh` rescans all reference folders.
 
 Repository, project, verification, worktree, and validation paths supplied through tools must be absolute and resolve beneath their configured boundary. Name-based skill validation uses the same catalog lookup as skill loading. Explicit skill-validation paths may also target unpublished skills anywhere beneath the authorized working project, without adding those paths to catalog discovery. Catalog discovery, skill validation, and technology detection recheck every nested manifest, metadata file, source file, and supporting resource before reading it. The server rejects missing boundary configuration, traversal, and symlink escape rather than granting ambient filesystem access.
 
@@ -232,8 +231,7 @@ Use the absolute executable directory reported by `uv tool dir --bin`. Replace `
       "args": [],
       "env": {
         "MCP_AGENT_OPS_SKILL_ROOTS": "/Users/YOUR_NAME/.agents/skills:/Users/YOUR_NAME/.codex/skills",
-        "MCP_AGENT_OPS_REFERENCE_ROOTS": "/Users/YOUR_NAME/.agents/references:/Users/YOUR_NAME/.codex/references",
-        "MCP_AGENT_OPS_REFERENCE_NAMES": "lexicon.txt",
+        "MCP_AGENT_OPS_REFERENCE_ROOTS": "/Users/YOUR_NAME/.agents:/Users/YOUR_NAME/.codex/skills",
         "MCP_AGENT_OPS_DETECTION_REGISTRY": "/Users/YOUR_NAME/.agents/skills/detect-technology-skills/references/technology-skill-detection-registry.yaml",
         "MCP_AGENT_OPS_WORKSPACE_ROOTS": "/Users/YOUR_NAME/dev"
       }
@@ -258,8 +256,7 @@ Use the absolute executable directory reported by `uv tool dir --bin`. Replace t
       "args": [],
       "env": {
         "MCP_AGENT_OPS_SKILL_ROOTS": "C:\\Users\\YOUR_NAME\\.agents\\skills;C:\\Users\\YOUR_NAME\\.codex\\skills",
-        "MCP_AGENT_OPS_REFERENCE_ROOTS": "C:\\Users\\YOUR_NAME\\.agents\\references;C:\\Users\\YOUR_NAME\\.codex\\references",
-        "MCP_AGENT_OPS_REFERENCE_NAMES": "lexicon.txt",
+        "MCP_AGENT_OPS_REFERENCE_ROOTS": "C:\\Users\\YOUR_NAME\\.agents;C:\\Users\\YOUR_NAME\\.codex\\skills",
         "MCP_AGENT_OPS_DETECTION_REGISTRY": "C:\\Users\\YOUR_NAME\\.agents\\skills\\detect-technology-skills\\references\\technology-skill-detection-registry.yaml",
         "MCP_AGENT_OPS_WORKSPACE_ROOTS": "C:\\Users\\YOUR_NAME\\dev"
       }

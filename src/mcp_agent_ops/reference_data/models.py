@@ -16,7 +16,7 @@ class ReferenceSourceMetadata(BaseModel):
 
 
 class AggregatedReference(BaseModel):
-    """Return one named reference assembled from every matching scope in search order."""
+    """Return one relative-path reference assembled from every matching folder in order."""
 
     name: str
     digest: str
@@ -26,7 +26,7 @@ class AggregatedReference(BaseModel):
 
 
 class PublishedReferenceCatalog(BaseModel):
-    """Describe the active path-free reference snapshot and its available names."""
+    """Describe the active host-path-free snapshot and its available relative paths."""
 
     revision: str
     names: list[str] = Field(default_factory=list)

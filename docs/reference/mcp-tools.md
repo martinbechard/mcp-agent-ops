@@ -102,16 +102,16 @@ result is the resolved output or JSON plan path.
 
 ## Reference Data
 
-Reference tools return allowlisted text from the active immutable snapshot.
+Reference tools return text beneath authorized folders from the active immutable snapshot.
 
 | Tool | Required arguments | Purpose |
 |---|---|---|
 | `reference_load` | `names` | Load one to thirty-two aggregated references in requested order. |
 | `reference_refresh` | none | Build and atomically publish a new reference snapshot. |
 
-`MCP_AGENT_OPS_REFERENCE_NAMES` contains the exact permitted direct filenames. `MCP_AGENT_OPS_REFERENCE_ROOTS` contains ordered user roots. Both lists use the operating-system path separator. When the working directory is beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`, the server searches its direct file first. It then searches each configured user root without recursion.
+`MCP_AGENT_OPS_REFERENCE_ROOTS` contains ordered readable user folders and uses the operating-system path separator. When the working directory is beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`, the server first searches its `.agents` and `.codex/skills` folders recursively. It then searches each configured user folder recursively.
 
-Every matching scope contributes to the result. The server joins source contents with one newline. It deduplicates scopes that resolve to the same file. Results contain a source count, path-free scope labels, byte counts, source digests, and an aggregate digest. One reference can include at most 64 sources, and one load can return at most 1 MiB of combined reference content. Invalid, duplicate, missing, unsafe, non-text, or oversized requests return no partial content. Newly added or changed references require `reference_refresh`.
+Callers identify references by paths relative to the allowed folders. Every matching folder contributes to the result. The server joins source contents with one newline and deduplicates folders that resolve to the same file. Non-UTF-8 files are not published. Results contain a source count, path-free scope labels, byte counts, source digests, and an aggregate digest. One reference can include at most 64 sources, and one load can return at most 1 MiB of combined reference content. Invalid, duplicate, missing, unsafe, or oversized requests return no partial content. Newly added or changed references require `reference_refresh`.
 
 ## Skills
 

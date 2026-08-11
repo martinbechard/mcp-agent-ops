@@ -11,7 +11,7 @@ CLI user -> CLI adapter -----^
 
 - `claims` owns registry locking, scope overlap, worktree selection, lifecycle events, journal maintenance, and reporting.
 - `verification` owns deterministic YAML and Markdown checks.
-- `reference_data` owns direct-file scope aggregation, filename allowlists, immutable content snapshots, batch limits, and digests.
+- `reference_data` owns recursive folder aggregation, relative-path validation, immutable content snapshots, batch limits, and digests.
 - `skill_catalog` owns root precedence, metadata extraction, immutable manifest snapshots, batch limits, digests, and safe content retrieval.
 - `skill_validation` owns deterministic Agent Skill structure validation.
 - `technology_detection` owns evidence-based skill selection from a trusted parsed registry.
@@ -70,9 +70,9 @@ The technology registry is parsed once per server process. A detection call comp
 
 ## Reference-loading boundary
 
-The adapter authorizes the working project through the configured workspace roots. It then passes that project root, the configured user roots, and the configured filename allowlist to `reference_data`. The domain package does not depend on FastMCP or environment parsing.
+The adapter authorizes the working project through the configured workspace roots. It then passes the project's `.agents` and `.codex/skills` folders plus the configured user reference folders to `reference_data`. The domain package does not depend on FastMCP or environment parsing.
 
-For each allowlisted name, the domain checks one direct file in the project root and one direct file in each configured user root. It does not recurse. It deduplicates identical resolved files, then joins all remaining UTF-8 contents with one newline in project-first search order. The model-facing result identifies each source by a path-free scope label and SHA-256 digest.
+The domain recursively discovers UTF-8 files beneath every allowed folder and publishes them by relative path. Files at the same relative path are aggregated in project-first folder order. The domain omits paths that escape through symlinks, deduplicates identical resolved files, and joins all remaining contents with one newline. The model-facing result identifies each source by a path-free scope label and SHA-256 digest.
 
 One reference snapshot is built lazily per server process. The snapshot pairs aggregated content with its digest. `reference_refresh` builds a replacement outside the publication lock and swaps it atomically. Readers observe either the complete old snapshot or the complete new snapshot.
 
@@ -80,8 +80,8 @@ One reference snapshot is built lazily per server process. The snapshot pairs ag
 
 The host configures separate user reference roots, user skill roots, and workspace roots. Automatic
 project scopes are accepted only when the process working directory is beneath an allowed
-workspace. The reference allowlist prevents arbitrary working-project files from becoming
-model-readable. Every reference candidate must resolve beneath its selected scope and must be a
+workspace. The project reference roots prevent unrelated working-project files from becoming
+model-readable. Every reference candidate must resolve beneath its selected folder and must be a
 regular UTF-8 file. Model-supplied repository, project, verification, validation, worktree,
 hierarchy source, theme, output, and plan paths are resolved only beneath their boundaries after
 symlink resolution. Skill validation and technology detection repeat containment at each nested

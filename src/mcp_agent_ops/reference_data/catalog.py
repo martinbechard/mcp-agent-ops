@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Loads allowlisted direct text files from every configured scope into immutable aggregations.
+# Summary: Loads recursive text references from authorized folders into immutable aggregations.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
@@ -28,11 +28,15 @@ def _digest(content: bytes) -> str:
 
 
 def _is_safe_name(name: str) -> bool:
+    path = Path(name)
     return (
         bool(name)
         and name not in {".", ".."}
-        and not name.startswith(".")
-        and not {"/", "\\", "\0"} & set(name)
+        and "\0" not in name
+        and "\\" not in name
+        and not path.is_absolute()
+        and all(part not in {"", ".", ".."} for part in path.parts)
+        and path.as_posix() == name
     )
 
 
@@ -40,9 +44,8 @@ def _within_root(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
 
-def _revision(allowed_names: list[str], entries: dict[str, AggregatedReference]) -> str:
+def _revision(entries: dict[str, AggregatedReference]) -> str:
     payload = {
-        "allowed_names": allowed_names,
         "entries": [
             {
                 "name": name,
@@ -56,83 +59,76 @@ def _revision(allowed_names: list[str], entries: dict[str, AggregatedReference])
 
 
 class ReferenceCatalog:
-    """Own one immutable snapshot of allowlisted direct reference files.
+    """Own one immutable snapshot of recursive references beneath allowed roots.
 
-    Use :meth:`from_scopes` with an authorized project root and administrator-configured
+    Use :meth:`from_scopes` with authorized project roots and administrator-configured
     reference roots. The resulting instance can service repeated model-facing loads while
     keeping content and digests paired until the caller builds a replacement snapshot.
+
+    Example:
+        ``ReferenceCatalog.from_scopes([project / ".agents"], [user / ".agents"])``
+        publishes every safe UTF-8 file by its path relative to those roots.
     """
 
     def __init__(
         self,
-        allowed_names: list[str],
         entries: dict[str, AggregatedReference],
     ) -> None:
-        self._allowed_name_set = frozenset(allowed_names)
         self._entries = {
             name: entry.model_copy(deep=True) for name, entry in entries.items()
         }
-        self._revision = _revision(list(allowed_names), self._entries)
+        self._revision = _revision(self._entries)
 
     @classmethod
     def from_scopes(
         cls,
-        project_root: Path | None,
+        project_roots: list[Path],
         roots: list[Path],
-        allowed_names: list[str],
     ) -> ReferenceCatalog:
-        """Build a project-first snapshot from direct UTF-8 files in every scope.
+        """Build a project-first snapshot from recursive UTF-8 files in every root.
 
         Args:
-            project_root: Optional authorized working-project root searched first.
+            project_roots: Authorized working-project folders searched first.
             roots: Administrator-configured reference roots searched in caller order.
-            allowed_names: Complete direct filenames that model-facing callers may load.
 
         Returns:
             An immutable path-free catalog containing every available aggregation.
 
         Raises:
             OSError: If a matching reference cannot be read.
-            UnicodeError: If a matching reference is not valid UTF-8 text.
-            ValueError: If configuration is unsafe, a matching path escapes its scope,
-                a matching path is not a regular file, or a name has too many sources.
+            ValueError: If a relative path has too many sources.
         """
-        if len(set(allowed_names)) != len(allowed_names):
-            raise ValueError("Configured reference names must be unique.")
-        if any(not _is_safe_name(name) for name in allowed_names):
-            raise ValueError("Configured reference names must be a safe direct filename.")
-
-        scopes: list[tuple[str, Path]] = []
-        if project_root is not None:
-            scopes.append(("project", project_root.expanduser().resolve()))
+        scopes = [
+            (f"project:{index}", root.expanduser().resolve())
+            for index, root in enumerate(project_roots)
+        ]
         scopes.extend(
             (f"configured:{index}", root.expanduser().resolve())
             for index, root in enumerate(roots)
         )
 
-        entries: dict[str, AggregatedReference] = {}
-        for name in allowed_names:
-            contents: list[str] = []
-            sources: list[ReferenceSourceMetadata] = []
-            seen_paths: set[Path] = set()
-            for scope, root in scopes:
-                if not root.is_dir():
+        aggregated: dict[str, tuple[list[str], list[ReferenceSourceMetadata], set[Path]]] = {}
+        for scope, root in scopes:
+            if not root.is_dir():
+                continue
+            for candidate in root.rglob("*"):
+                if not candidate.is_file():
                     continue
-                candidate = root / name
                 resolved = candidate.resolve()
                 if not _within_root(resolved, root):
-                    raise ValueError(
-                        f"Reference '{name}' resolves outside its configured scope."
-                    )
-                if not candidate.exists() and not candidate.is_symlink():
                     continue
-                if not resolved.is_file():
-                    raise ValueError(f"Reference '{name}' must be a regular file.")
+                name = candidate.relative_to(root).as_posix()
+                if not _is_safe_name(name):
+                    continue
+                contents, sources, seen_paths = aggregated.setdefault(name, ([], [], set()))
                 if resolved in seen_paths:
                     continue
                 seen_paths.add(resolved)
                 content_bytes = resolved.read_bytes()
-                content = content_bytes.decode("utf-8")
+                try:
+                    content = content_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
                 contents.append(content)
                 sources.append(
                     ReferenceSourceMetadata(
@@ -141,10 +137,13 @@ class ReferenceCatalog:
                         byte_count=len(content_bytes),
                     )
                 )
-            if len(sources) > _MAX_SOURCES_PER_REFERENCE:
-                raise ValueError(
-                    f"Reference '{name}' has more than {_MAX_SOURCES_PER_REFERENCE} sources."
-                )
+                if len(sources) > _MAX_SOURCES_PER_REFERENCE:
+                    raise ValueError(
+                        f"Reference '{name}' has more than {_MAX_SOURCES_PER_REFERENCE} sources."
+                    )
+
+        entries: dict[str, AggregatedReference] = {}
+        for name, (contents, sources, _) in aggregated.items():
             if sources:
                 content = "\n".join(contents)
                 entries[name] = AggregatedReference(
@@ -154,7 +153,7 @@ class ReferenceCatalog:
                     source_count=len(sources),
                     sources=sources,
                 )
-        return cls(list(allowed_names), entries)
+        return cls(entries)
 
     def public_result(self) -> PublishedReferenceCatalog:
         """Return the current revision and available names without host paths."""
@@ -167,10 +166,10 @@ class ReferenceCatalog:
         """Load bounded aggregated references in requested order without partial content.
 
         Args:
-            names: One to thirty-two unique direct reference filenames.
+            names: One to thirty-two unique relative reference paths.
 
         Returns:
-            Every requested aggregation when names are safe, allowed, available, and within
+            Every requested aggregation when paths are safe, available, and within
             the response-size limit; otherwise an error-only result for this snapshot.
         """
         if not names:
@@ -184,7 +183,7 @@ class ReferenceCatalog:
         if invalid is not None:
             return self._error(
                 "invalid_reference_name",
-                "Reference names must be safe direct filenames.",
+                "Reference names must be safe relative paths.",
                 invalid,
             )
         duplicate = next((name for name in names if names.count(name) > 1), None)
@@ -193,16 +192,6 @@ class ReferenceCatalog:
                 "duplicate_reference",
                 "Reference names must be unique within one batch.",
                 duplicate,
-            )
-        unallowed = next(
-            (name for name in names if name not in self._allowed_name_set),
-            None,
-        )
-        if unallowed is not None:
-            return self._error(
-                "reference_not_allowed",
-                "Every requested reference must be explicitly configured.",
-                unallowed,
             )
         missing = next((name for name in names if name not in self._entries), None)
         if missing is not None:

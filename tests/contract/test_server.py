@@ -725,10 +725,15 @@ async def test_server_aggregates_reference_scopes_until_explicit_refresh(tmp_pat
     shared = tmp_path / "shared"
     project.mkdir()
     shared.mkdir()
-    project_reference = project / "lexicon.txt"
-    shared_reference = shared / "lexicon.txt"
+    project_reference = project / ".agents" / "references" / "lexicon.txt"
+    shared_reference = shared / "references" / "lexicon.txt"
+    project_reference.parent.mkdir(parents=True)
+    shared_reference.parent.mkdir(parents=True)
     project_reference.write_text("project", encoding="utf-8")
     shared_reference.write_text("shared", encoding="utf-8")
+    project_skill_reference = project / ".codex" / "skills" / "example" / "notes.md"
+    project_skill_reference.parent.mkdir(parents=True)
+    project_skill_reference.write_text("project skill notes", encoding="utf-8")
     original_builder = ReferenceCatalog.from_scopes
     with mock.patch.object(
         ReferenceCatalog,
@@ -740,14 +745,13 @@ async def test_server_aggregates_reference_scopes_until_explicit_refresh(tmp_pat
             workspace_roots=[tmp_path],
             project_root=project,
             reference_roots=[shared],
-            reference_names=["lexicon.txt"],
         )
         async with Client(server) as client:
             tools = {tool.name: tool for tool in await client.list_tools()}
             assert set(tools["reference_load"].inputSchema["properties"]) == {"names"}
             first = await client.call_tool(
                 "reference_load",
-                {"names": ["lexicon.txt"]},
+                {"names": ["references/lexicon.txt"]},
             )
             assert build_catalog.call_count == 1
             assert first.structured_content["ok"] is True
@@ -755,7 +759,7 @@ async def test_server_aggregates_reference_scopes_until_explicit_refresh(tmp_pat
             assert reference["content"] == "project\nshared"
             assert reference["source_count"] == 2
             assert [source["scope"] for source in reference["sources"]] == [
-                "project",
+                "project:0",
                 "configured:0",
             ]
             assert "path" not in json.dumps(first.structured_content)
@@ -763,17 +767,20 @@ async def test_server_aggregates_reference_scopes_until_explicit_refresh(tmp_pat
             project_reference.write_text("changed", encoding="utf-8")
             unchanged = await client.call_tool(
                 "reference_load",
-                {"names": ["lexicon.txt"]},
+                {"names": ["references/lexicon.txt"]},
             )
             assert unchanged.structured_content == first.structured_content
 
             published = await client.call_tool("reference_refresh", {})
             refreshed = await client.call_tool(
                 "reference_load",
-                {"names": ["lexicon.txt"]},
+                {"names": ["references/lexicon.txt"]},
             )
             assert build_catalog.call_count == 2
-            assert published.structured_content["names"] == ["lexicon.txt"]
+            assert published.structured_content["names"] == [
+                "example/notes.md",
+                "references/lexicon.txt",
+            ]
             assert refreshed.structured_content["references"][0]["content"] == "changed\nshared"
 
             invalid = await client.call_tool(
@@ -793,14 +800,14 @@ async def test_server_ignores_project_references_outside_authorized_workspaces(
     shared = tmp_path / "shared"
     for root in (workspace, project, shared):
         root.mkdir()
-    (project / "lexicon.txt").write_text("outside", encoding="utf-8")
+    (project / ".agents").mkdir()
+    (project / ".agents" / "lexicon.txt").write_text("outside", encoding="utf-8")
     (shared / "lexicon.txt").write_text("shared", encoding="utf-8")
     server = create_server(
         skill_roots=[],
         workspace_roots=[workspace],
         project_root=project,
         reference_roots=[shared],
-        reference_names=["lexicon.txt"],
     )
 
     async with Client(server) as client:
@@ -1522,7 +1529,6 @@ async def test_shared_audit_records_bounded_reference_outcomes(tmp_path: Path) -
     server = create_server(
         skill_roots=[],
         reference_roots=[references],
-        reference_names=["lexicon.txt", "missing.txt"],
         audit_log=audit_log,
         audit_roots=[evidence],
         audit_shared=True,

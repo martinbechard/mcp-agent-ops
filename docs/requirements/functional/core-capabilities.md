@@ -23,10 +23,10 @@
 
 ## Reference Data
 
-- The service loads only allowlisted direct UTF-8 reference filenames.
-- An authorized working-project match precedes matches from configured user roots.
+- The service recursively loads UTF-8 reference files beneath authorized folders by relative path.
+- Matches beneath an authorized working project's `.agents` and `.codex/skills` folders precede matches from configured user folders.
 - Every matching scope contributes to one newline-separated aggregation; later matches do not shadow earlier matches.
-- Reference discovery does not search subdirectories.
+- Reference discovery rejects traversal and does not publish symlinks that resolve outside their selected folder.
 - A caller can load several aggregated references in one ordered, bounded, all-or-nothing operation.
 - Model-facing reference results contain content, source counts, byte counts, and digests without host filesystem paths.
 - An explicit refresh builds a replacement reference snapshot and publishes it atomically.

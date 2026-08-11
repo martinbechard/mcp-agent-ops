@@ -180,25 +180,14 @@ def configured_skill_roots() -> list[Path]:
 
 
 def configured_reference_roots() -> list[Path]:
-    """Read ordered user reference roots from the server environment.
+    """Read ordered recursive user reference folders from the server environment.
 
     Returns:
         Expanded paths from `MCP_AGENT_OPS_REFERENCE_ROOTS`, split using the host
-        operating-system path separator. Empty configuration provides no user scopes.
+        operating-system path separator. Empty configuration provides no user folders.
     """
     raw = os.environ.get("MCP_AGENT_OPS_REFERENCE_ROOTS", "")
     return [Path(value).expanduser() for value in raw.split(os.pathsep) if value]
-
-
-def configured_reference_names() -> list[str]:
-    """Read the exact model-readable reference filename allowlist.
-
-    Returns:
-        Values from `MCP_AGENT_OPS_REFERENCE_NAMES`, split using the host
-        operating-system path separator. The domain validates every configured name.
-    """
-    raw = os.environ.get("MCP_AGENT_OPS_REFERENCE_NAMES", "")
-    return [value for value in raw.split(os.pathsep) if value]
 
 
 def configured_detection_registry() -> Path | None:
@@ -230,6 +219,34 @@ def _project_skill_roots(project_root: Path, workspace_roots: Sequence[Path]) ->
     resolved_roots = [root.resolve() for root in roots]
     if not all(_within_root(root, resolved_project) for root in resolved_roots):
         raise ValueError("Project skill root resolves outside the project root.")
+    return resolved_roots
+
+
+def _project_reference_roots(
+    project_root: Path,
+    workspace_roots: Sequence[Path],
+) -> list[Path]:
+    """Return project agent and skill folders when the project is in scope.
+
+    Args:
+        project_root: Working project whose local agent references may be published.
+        workspace_roots: Configured roots authorized to contain working projects.
+
+    Returns:
+        The project ``.agents`` and ``.codex/skills`` folders, or an empty list when the
+        project is outside every authorized workspace.
+
+    Raises:
+        ValueError: If either conventional folder resolves outside the project root.
+    """
+    resolved_project = project_root.expanduser().resolve()
+    resolved_workspaces = [root.expanduser().resolve() for root in workspace_roots]
+    if not any(_within_root(resolved_project, root) for root in resolved_workspaces):
+        return []
+    roots = [resolved_project / ".agents", resolved_project / ".codex" / "skills"]
+    resolved_roots = [root.resolve() for root in roots]
+    if not all(_within_root(root, resolved_project) for root in resolved_roots):
+        raise ValueError("Project reference root resolves outside the project root.")
     return resolved_roots
 
 
@@ -277,7 +294,6 @@ def create_server(
     audit_session_id: str | None = None,
     project_root: Path | None = None,
     reference_roots: Sequence[Path] | None = None,
-    reference_names: Sequence[str] | None = None,
 ) -> FastMCP:
     """Create the MCP agent-operations server with immutable read snapshots.
 
@@ -292,13 +308,12 @@ def create_server(
         audit_roots: Optional allowed roots for the audit log, replacing environment configuration.
         audit_shared: Allow inherited MCP server processes to append separate streams to one log.
         audit_session_id: Optional evaluator-generated identity copied into every audit record.
-        project_root: Working-directory project context used for automatic recursive
-            `.agents/skills` and `.codex/skills` discovery. Defaults to the process
-            working directory and is ignored unless it is inside a configured workspace.
-        reference_roots: Optional ordered user reference roots used instead of environment
-            configuration. Only direct files whose names are allowlisted are considered.
-        reference_names: Optional direct-filename allowlist used instead of environment
-            configuration for model-readable reference content.
+        project_root: Working-directory project context used for automatic skill discovery
+            beneath `.agents/skills` and `.codex/skills` and reference discovery beneath
+            `.agents` and `.codex/skills`. Defaults to the process working directory and is
+            ignored unless it is inside a configured workspace.
+        reference_roots: Optional ordered user reference folders used instead of environment
+            configuration. Every contained UTF-8 file is available by relative path.
 
     Returns:
         A FastMCP server ready for in-memory testing or stdio execution.
@@ -314,11 +329,6 @@ def create_server(
         if reference_roots is not None
         else configured_reference_roots()
     )
-    allowed_reference_names = (
-        list(reference_names)
-        if reference_names is not None
-        else configured_reference_names()
-    )
     registry = detection_registry or configured_detection_registry()
     workspaces = (
         list(workspace_roots)
@@ -327,7 +337,7 @@ def create_server(
     )
     active_project_root = (project_root or Path.cwd()).expanduser().resolve()
     project_roots = _project_skill_roots(active_project_root, workspaces)
-    project_reference_root = active_project_root if project_roots else None
+    project_reference_roots = _project_reference_roots(active_project_root, workspaces)
     catalog_roots = [*project_roots, *roots]
     skill_validation_roots = [
         *catalog_roots,
@@ -390,9 +400,8 @@ def create_server(
     def build_references() -> ReferenceCatalog:
         try:
             return ReferenceCatalog.from_scopes(
-                project_reference_root,
+                project_reference_roots,
                 configured_references,
-                allowed_reference_names,
             )
         except (OSError, UnicodeError, ValueError):
             raise ValueError("Configured reference catalog is invalid.") from None
@@ -876,10 +885,10 @@ def create_server(
 
     @mcp.tool
     def reference_load(names: list[str]) -> ReferenceLoadResult:
-        """Load allowlisted direct text references aggregated across every matching scope.
+        """Load recursive text references aggregated across every matching allowed folder.
 
         Args:
-            names: One to thirty-two unique filenames in requested result order.
+            names: One to thirty-two unique relative paths in requested result order.
 
         Returns:
             An ordered all-or-nothing result from the active immutable reference snapshot.

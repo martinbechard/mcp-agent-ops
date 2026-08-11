@@ -29,11 +29,14 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
     environment["MCP_AGENT_OPS_SKILL_ROOTS"] = str(tmp_path / "skills")
     reference_root = tmp_path / "references"
     reference_root.mkdir()
-    project_reference = tmp_path / "lexicon.txt"
+    project_reference = tmp_path / ".agents" / "references" / "lexicon.txt"
+    project_reference.parent.mkdir(parents=True)
     project_reference.write_text("project vocabulary", encoding="utf-8")
-    (reference_root / "lexicon.txt").write_text("shared vocabulary", encoding="utf-8")
+    (reference_root / "references").mkdir()
+    (reference_root / "references" / "lexicon.txt").write_text(
+        "shared vocabulary", encoding="utf-8"
+    )
     environment["MCP_AGENT_OPS_REFERENCE_ROOTS"] = str(reference_root)
-    environment["MCP_AGENT_OPS_REFERENCE_NAMES"] = "lexicon.txt"
     environment["MCP_AGENT_OPS_WORKSPACE_ROOTS"] = str(tmp_path)
     environment["MCP_AGENT_OPS_AUDIT_LOG"] = str(tmp_path / "mcp-audit.jsonl")
     environment["MCP_AGENT_OPS_AUDIT_ROOTS"] = str(tmp_path)
@@ -131,7 +134,7 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
         assert refreshed.structured_content["skills"][0]["content"].endswith("# Changed\n")
         first_reference = await client.call_tool(
             "reference_load",
-            {"names": ["lexicon.txt"]},
+            {"names": ["references/lexicon.txt"]},
         )
         assert first_reference.structured_content["references"][0]["content"] == (
             "project vocabulary\nshared vocabulary"
@@ -139,13 +142,13 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
         project_reference.write_text("changed vocabulary", encoding="utf-8")
         unchanged_reference = await client.call_tool(
             "reference_load",
-            {"names": ["lexicon.txt"]},
+            {"names": ["references/lexicon.txt"]},
         )
         assert unchanged_reference.structured_content == first_reference.structured_content
         await client.call_tool("reference_refresh", {})
         refreshed_reference = await client.call_tool(
             "reference_load",
-            {"names": ["lexicon.txt"]},
+            {"names": ["references/lexicon.txt"]},
         )
         assert refreshed_reference.structured_content["references"][0]["content"] == (
             "changed vocabulary\nshared vocabulary"
