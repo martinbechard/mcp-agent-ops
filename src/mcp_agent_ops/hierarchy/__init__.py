@@ -4,7 +4,20 @@
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
-from mcp_agent_ops.hierarchy.plan import create_hierarchy_plan, update_hierarchy_plan
+from mcp_agent_ops.hierarchy.plan import (
+    HierarchyPlanItemReference,
+    HierarchyPlanNextTask,
+    HierarchyPlanUpdateResult,
+    create_hierarchy_plan,
+    update_hierarchy_plan,
+)
 from mcp_agent_ops.hierarchy.renderer import render_hierarchy_html
 
-__all__ = ["create_hierarchy_plan", "render_hierarchy_html", "update_hierarchy_plan"]
+__all__ = [
+    "HierarchyPlanItemReference",
+    "HierarchyPlanNextTask",
+    "HierarchyPlanUpdateResult",
+    "create_hierarchy_plan",
+    "render_hierarchy_html",
+    "update_hierarchy_plan",
+]

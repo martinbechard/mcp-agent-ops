@@ -46,7 +46,9 @@ def test_updates_completion_and_text_by_exact_path_or_unique_title(tmp_path: Pat
         output_folder=tmp_path,
     )
 
-    assert update_hierarchy_plan(plan_path, "1.1", text="First task") == plan_path
+    renamed = update_hierarchy_plan(plan_path, "1.1", text="First task")
+    assert renamed.success is True
+    assert renamed.plan_path == plan_path
     update_hierarchy_plan(plan_path, "First task", completed=True)
     assert 'aria-label="1.1 complete"' in (tmp_path / "plan.html").read_text(encoding="utf-8")
     update_hierarchy_plan(plan_path, "First task", completed=False)
@@ -64,6 +66,209 @@ def test_updates_completion_and_text_by_exact_path_or_unique_title(tmp_path: Pat
     assert "First task" in html
     assert "Task 10" in html
     assert 'aria-label="1.1 incomplete"' in html
+
+
+def test_completion_returns_next_leaf_and_completes_finished_parent(tmp_path: Path) -> None:
+    plan_path = create_hierarchy_plan(
+        {
+            "Plan": {
+                "First group": ["First task", "Second task"],
+                "Second group": ["First of second", "Second of second"],
+            }
+        },
+        output_filename="plan.html",
+        output_folder=tmp_path,
+    )
+
+    first = update_hierarchy_plan(plan_path, "1.1", completed=True)
+
+    assert first.success is True
+    assert first.plan_path == plan_path
+    assert first.automatically_completed == []
+    assert first.next_task is not None
+    assert first.next_task.model_dump(mode="json") == {
+        "identifier": "1.2",
+        "label": "Second task",
+        "parents": [{"identifier": "1", "label": "First group"}],
+    }
+
+    second = update_hierarchy_plan(plan_path, "1.2", completed=True)
+
+    assert [item.model_dump() for item in second.automatically_completed] == [
+        {"identifier": "1", "label": "First group"}
+    ]
+    assert second.next_task is not None
+    assert second.next_task.model_dump(mode="json") == {
+        "identifier": "2.1",
+        "label": "First of second",
+        "parents": [{"identifier": "2", "label": "Second group"}],
+    }
+    plan = _read_plan(plan_path)
+    first_group = plan["items"][0]
+    assert isinstance(first_group, dict)
+    assert first_group["complete"] is True
+
+
+def test_completion_cascades_through_every_finished_ancestor(tmp_path: Path) -> None:
+    plan_path = create_hierarchy_plan(
+        {
+            "Plan": {
+                "First phase": {"Only group": ["First task", "Last task"]},
+                "Second phase": "Release",
+            }
+        },
+        output_filename="plan.html",
+        output_folder=tmp_path,
+        completed_items=("1.1.1",),
+    )
+
+    result = update_hierarchy_plan(plan_path, "1.1.2", completed=True)
+
+    assert [item.model_dump() for item in result.automatically_completed] == [
+        {"identifier": "1.1", "label": "Only group"},
+        {"identifier": "1", "label": "First phase"},
+    ]
+    assert result.next_task is not None
+    assert result.next_task.model_dump(mode="json") == {
+        "identifier": "2",
+        "label": "Second phase: Release",
+        "parents": [],
+    }
+
+
+def test_next_task_uses_plan_order_and_complete_parent_context(tmp_path: Path) -> None:
+    plan_path = create_hierarchy_plan(
+        {
+            "Plan": {
+                "First phase": {"Only group": ["First task", "Second task"]},
+                "Later task": "Release",
+            }
+        },
+        output_filename="plan.html",
+        output_folder=tmp_path,
+    )
+
+    result = update_hierarchy_plan(plan_path, "2", completed=True)
+
+    assert result.next_task is not None
+    assert result.next_task.model_dump(mode="json") == {
+        "identifier": "1.1.1",
+        "label": "First task",
+        "parents": [
+            {"identifier": "1", "label": "First phase"},
+            {"identifier": "1.1", "label": "Only group"},
+        ],
+    }
+
+
+def test_reopening_child_clears_completed_ancestors(tmp_path: Path) -> None:
+    plan_path = create_hierarchy_plan(
+        {"Plan": {"Group": ["First task", "Second task"]}},
+        output_filename="plan.html",
+        output_folder=tmp_path,
+    )
+    update_hierarchy_plan(plan_path, "1.1", completed=True)
+    update_hierarchy_plan(plan_path, "1.2", completed=True)
+
+    result = update_hierarchy_plan(plan_path, "1.1", completed=False)
+
+    assert result.automatically_completed == []
+    assert result.next_task is not None
+    assert result.next_task.identifier == "1.1"
+    plan = _read_plan(plan_path)
+    group = plan["items"][0]
+    assert isinstance(group, dict)
+    assert group["complete"] is False
+
+
+def test_branch_completion_applies_to_descendants_before_selecting_next_task(
+    tmp_path: Path,
+) -> None:
+    plan_path = create_hierarchy_plan(
+        {
+            "Plan": {
+                "Outer": {"Group": ["First task", "Second task"]},
+                "Release": "Publish",
+            }
+        },
+        output_filename="plan.html",
+        output_folder=tmp_path,
+    )
+
+    result = update_hierarchy_plan(plan_path, "1.1", completed=True)
+
+    assert [item.model_dump() for item in result.automatically_completed] == [
+        {"identifier": "1", "label": "Outer"}
+    ]
+    assert result.next_task is not None
+    assert result.next_task.identifier == "2"
+    plan = _read_plan(plan_path)
+    outer = plan["items"][0]
+    assert isinstance(outer, dict)
+    group = outer["children"][0]
+    assert isinstance(group, dict)
+    assert group["complete"] is True
+    assert all(child["complete"] is True for child in group["children"])
+
+
+def test_structural_mutations_reopen_completed_ancestors(tmp_path: Path) -> None:
+    plan_path = create_hierarchy_plan(
+        {"Plan": {"Group": ["First task"]}},
+        output_filename="plan.html",
+        output_folder=tmp_path,
+        completed_items=("1",),
+    )
+
+    child_result = update_hierarchy_plan(plan_path, "1", add_child="Second task")
+
+    assert child_result.next_task is not None
+    assert child_result.next_task.identifier == "1.2"
+    plan = _read_plan(plan_path)
+    group = plan["items"][0]
+    assert isinstance(group, dict)
+    assert group["complete"] is False
+
+    update_hierarchy_plan(plan_path, "1.2", completed=True)
+    peer_result = update_hierarchy_plan(plan_path, "1.2", add_peer_after="Third task")
+
+    assert peer_result.next_task is not None
+    assert peer_result.next_task.identifier == "1.3"
+    plan = _read_plan(plan_path)
+    group = plan["items"][0]
+    assert isinstance(group, dict)
+    assert group["complete"] is False
+
+    update_hierarchy_plan(plan_path, "1.3", completed=True)
+    replaced = update_hierarchy_plan(plan_path, "1", replace_children=("Replacement",))
+
+    assert replaced.next_task is not None
+    assert replaced.next_task.identifier == "1.1"
+    plan = _read_plan(plan_path)
+    group = plan["items"][0]
+    assert isinstance(group, dict)
+    assert group["complete"] is False
+
+
+def test_reopening_branch_reopens_its_complete_subtree(tmp_path: Path) -> None:
+    plan_path = create_hierarchy_plan(
+        {"Plan": {"Outer": {"Group": ["First task", "Second task"]}}},
+        output_filename="plan.html",
+        output_folder=tmp_path,
+    )
+    update_hierarchy_plan(plan_path, "1", completed=True)
+
+    result = update_hierarchy_plan(plan_path, "1.1", completed=False)
+
+    assert result.next_task is not None
+    assert result.next_task.identifier == "1.1.1"
+    plan = _read_plan(plan_path)
+    outer = plan["items"][0]
+    assert isinstance(outer, dict)
+    group = outer["children"][0]
+    assert isinstance(group, dict)
+    assert outer["complete"] is False
+    assert group["complete"] is False
+    assert all(child["complete"] is False for child in group["children"])
 
 
 def test_adds_and_replaces_children_and_inserts_a_peer_after_the_target(tmp_path: Path) -> None:

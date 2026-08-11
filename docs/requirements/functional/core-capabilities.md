@@ -60,6 +60,9 @@
 - Durable plan creation writes a same-named JSON source and HTML report, then returns the JSON path.
 - Plan mutation targets one item by an exact dotted path or exact unique title.
 - One mutation call can change completion, replace text, add a child, replace all children, or add a peer after the target.
+- Branch completion is derived from child completion. Completing or reopening a branch applies to its descendants, and structural mutations recompute affected ancestors.
+- Completing the last incomplete child automatically completes each finished ancestor; reopening a child clears completed ancestors.
+- A successful mutation returns the first incomplete executable leaf in depth-first plan order, including its dotted identifier, label, and parent context, or null when none remains.
 - Every successful mutation rewrites the JSON source and regenerates the read-only HTML report.
 
 ## Protocol

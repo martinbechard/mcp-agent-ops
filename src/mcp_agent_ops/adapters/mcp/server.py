@@ -18,9 +18,14 @@ from pydantic import Field
 from mcp_agent_ops.adapters.mcp.audit import ToolAuditLog, ToolAuditMiddleware
 from mcp_agent_ops.claims.service import ClaimCommandResult, run_claim_command
 from mcp_agent_ops.hierarchy import (
+    HierarchyPlanUpdateResult,
+)
+from mcp_agent_ops.hierarchy import (
     create_hierarchy_plan as create_hierarchy_plan_domain,
 )
-from mcp_agent_ops.hierarchy import render_hierarchy_html as render_hierarchy_html_domain
+from mcp_agent_ops.hierarchy import (
+    render_hierarchy_html as render_hierarchy_html_domain,
+)
 from mcp_agent_ops.hierarchy import (
     update_hierarchy_plan as update_hierarchy_plan_domain,
 )
@@ -816,7 +821,7 @@ def create_server(
         add_child: str | None = None,
         replace_children: list[str] | None = None,
         add_peer_after: str | None = None,
-    ) -> str:
+    ) -> HierarchyPlanUpdateResult:
         """Apply exactly one targeted plan mutation and regenerate its HTML rendering.
 
         The plan path must be absolute beneath configured workspace roots. The target is
@@ -826,14 +831,15 @@ def create_server(
         Args:
             plan_path: Absolute JSON plan path returned by `create_hierarchy_plan`.
             target: Exact dotted path or exact unique item title.
-            completed: Replacement completion state.
+            completed: Replacement completion state; branch updates include descendants.
             text: Replacement item text.
             add_child: Text for one appended child.
             replace_children: Ordered replacement child texts; an empty list removes all.
             add_peer_after: Text for one peer inserted immediately after the target.
 
         Returns:
-            Resolved JSON plan path after both durable files are rewritten.
+            Structured success, plan path, automatically completed ancestors, and the
+            next incomplete executable leaf with its parent context.
 
         Raises:
             ValueError: If the path escapes its workspace, the target is invalid, or the
@@ -851,7 +857,7 @@ def create_server(
             replace_children=replace_children,
             add_peer_after=add_peer_after,
         )
-        return str(result)
+        return result
 
     @mcp.tool
     def verify_yaml(repository_root: str, paths: list[str]) -> VerificationReport:

@@ -18,9 +18,10 @@
   level-first control order, plus/minus global controls, progressive level visibility, dotted
   one-based numbering, transparent singleton roots, exact completed-item paths, optional read-only
   completion markers, durable plan creation, JSON source-path returns, unique-title and exact-path
-  targeting, completion and text updates, child replacement and insertion, peer insertion,
-  regeneration, packaged and caller-supplied themes, cyclic input rejection, and self-contained
-  output-file writing.
+  targeting, completion and text updates, branch-subtree completion, upward completion cascading,
+  ancestor reopening after completion and structural mutation, depth-first next-leaf selection
+  with parent context, child replacement and insertion, peer insertion, regeneration, packaged
+  and caller-supplied themes, cyclic input rejection, and self-contained output-file writing.
 
 ## Claim compatibility tests
 
@@ -43,7 +44,7 @@
   timing, deadline extension, release disposition, reset, all three broad claim domains, aggregated
   reference loading, precedence-resolved skill path lookup, optional extension switches,
   validation by name or absolute path, batch loading, explicit refresh, hierarchy rendering, and
-  durable hierarchy-plan creation and mutation.
+  durable hierarchy-plan creation and structured mutation results.
 - In-memory calls for each capability group and immutable catalog reuse across repeated calls.
 - CLI and MCP parity for the canonical registry path and structured migration stops.
 - Rejection of repository, worktree, verification, validation, detection, hierarchy, and persisted
@@ -62,7 +63,8 @@
 - Overlapping concurrent claims produce one safe owner and one wait outcome.
 - A real stdio subprocess initializes, advertises current work-item, deadline, release, reset,
   broad-domain, and hierarchy tools, invokes all three hierarchy operations, preserves reference
-  and skill snapshots until explicit refresh, and shuts down cleanly.
+  and skill snapshots until explicit refresh, returns the next executable plan task, and shuts down
+  cleanly.
 - Windows CI runs the complete claim compatibility suite plus a real stdio subprocess; evaluator-only shared audit remains on its documented POSIX boundary.
 
 ## Release gates

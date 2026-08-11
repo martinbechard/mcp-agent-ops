@@ -165,13 +165,16 @@ plan_path = create_hierarchy_plan(
     output_folder="reports",
 )
 update_hierarchy_plan(plan_path, "2", add_child="Write focused tests")
-update_hierarchy_plan(plan_path, "Implement", completed=True)
+result = update_hierarchy_plan(plan_path, "2.1", completed=True)
+if result.next_task is not None:
+    print(result.next_task.identifier, result.next_task.label)
 ```
 
 The MCP server publishes the same three names: `render_hierarchy_html`,
 `create_hierarchy_plan`, and `update_hierarchy_plan`. MCP file and folder paths must be absolute
-and resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`. Creation and update results return the
-resolved JSON plan path so a later agent call can mutate the same plan.
+and resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`. Creation returns the resolved JSON plan path.
+Update returns structured success, that same path, any automatically completed ancestors, and the
+next incomplete executable leaf with its parent context.
 
 See the [complete hierarchical HTML renderer reference](docs/reference/hierarchy-html-renderer.md)
 for rendering, durable plan creation, exact item targeting, mutations, numbering, read-only browser

@@ -452,12 +452,14 @@ async def test_server_exposes_workspace_safe_hierarchy_tools(tmp_path: Path) -> 
             "plan_path",
             "target",
         }
-        for tool_name in (
-            "render_hierarchy_html",
-            "create_hierarchy_plan",
-            "update_hierarchy_plan",
-        ):
+        for tool_name in ("render_hierarchy_html", "create_hierarchy_plan"):
             assert tools[tool_name].outputSchema["properties"]["result"]["type"] == "string"
+        assert set(tools["update_hierarchy_plan"].outputSchema["properties"]) == {
+            "success",
+            "plan_path",
+            "automatically_completed",
+            "next_task",
+        }
 
         rendered = await client.call_tool(
             "render_hierarchy_html",
@@ -502,10 +504,35 @@ async def test_server_exposes_workspace_safe_hierarchy_tools(tmp_path: Path) -> 
                 "add_child": "Publish wheel",
             },
         )
-        assert updated.structured_content["result"] == str(plan_path)
+        assert updated.structured_content == {
+            "success": True,
+            "plan_path": str(plan_path),
+            "automatically_completed": [],
+            "next_task": {
+                "identifier": "2.1",
+                "label": "Publish wheel",
+                "parents": [{"identifier": "2", "label": "Release"}],
+            },
+        }
         html = (workspace / "delivery-plan.html").read_text(encoding="utf-8")
         assert "Publish wheel" in html
         assert 'aria-label="1 complete"' in html
+        completed = await client.call_tool(
+            "update_hierarchy_plan",
+            {
+                "plan_path": str(plan_path),
+                "target": "2.1",
+                "completed": True,
+            },
+        )
+        assert completed.structured_content == {
+            "success": True,
+            "plan_path": str(plan_path),
+            "automatically_completed": [
+                {"identifier": "2", "label": "Release"}
+            ],
+            "next_task": None,
+        }
         with pytest.raises(ToolError, match="requires exactly one mutation"):
             await client.call_tool(
                 "update_hierarchy_plan",

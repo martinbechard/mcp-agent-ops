@@ -79,13 +79,20 @@ Hierarchy tools render inline or file-backed JSON/YAML data and maintain durable
 |---|---|---|
 | `render_hierarchy_html` | `source` | Return self-contained HTML or save it when `output_filename` is supplied. |
 | `create_hierarchy_plan` | `source`, `output_filename` | Write a same-named JSON plan and HTML report, then return the JSON path. |
-| `update_hierarchy_plan` | `plan_path`, `target`, exactly one mutation | Update one item, rewrite the JSON plan, regenerate the HTML report, and return the JSON path. |
+| `update_hierarchy_plan` | `plan_path`, `target`, exactly one mutation | Update one item, cascade completion through finished ancestors, regenerate both files, and return the next executable leaf. |
 
 `render_hierarchy_html` accepts optional `title`, `theme`, `themes_folder`, `numbering`,
 `checkboxes`, `completed_items`, `output_filename`, and `output_folder` arguments.
 `create_hierarchy_plan` accepts the same presentation and completion arguments except `numbering`
 and `checkboxes`, which durable plans always enable. `update_hierarchy_plan` requires exactly one
 of `completed`, `text`, `add_child`, `replace_children`, or `add_peer_after`.
+Branch completion is derived from its descendants. A completion mutation on a branch applies to
+the subtree, and structural mutations recompute ancestor completion.
+
+An update result contains `success`, `plan_path`, `automatically_completed`, and `next_task`.
+The next task is the first incomplete leaf in depth-first plan order. Its `identifier` and `label`
+identify the work, while its outermost-first `parents` list provides context for a nested task.
+`next_task` is null when no incomplete executable leaf remains.
 
 Inline mappings, sequences, JSON, and YAML require no filesystem path. A model-supplied source
 path, custom theme folder, output folder, or plan path must be absolute and resolve beneath

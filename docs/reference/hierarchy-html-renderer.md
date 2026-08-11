@@ -56,7 +56,7 @@ The MCP server publishes the three hierarchy functions under their Python names.
 |---|---|---|
 | `render_hierarchy_html` | `source` | Complete HTML, or the resolved HTML path when `output_filename` is supplied. |
 | `create_hierarchy_plan` | `source`, `output_filename` | Resolved JSON plan path. |
-| `update_hierarchy_plan` | `plan_path`, `target`, and exactly one mutation argument | Resolved JSON plan path after JSON and HTML regeneration. |
+| `update_hierarchy_plan` | `plan_path`, `target`, and exactly one mutation argument | Structured success, plan path, completed ancestors, and next executable task. |
 
 MCP calls can supply an inline mapping, sequence, JSON string, or YAML string as `source`. A source
 file path, custom `themes_folder`, `output_folder`, or `plan_path` must be absolute. Each path must
@@ -81,6 +81,25 @@ Pass the returned JSON path to `update_hierarchy_plan`:
   "plan_path": "/workspace/project/reports/delivery-plan.json",
   "target": "2",
   "add_child": "Write focused tests"
+}
+```
+
+Completing a task returns a structured result. A nested next task includes its parent context:
+
+```json
+{
+  "success": true,
+  "plan_path": "/workspace/project/reports/delivery-plan.json",
+  "automatically_completed": [
+    {"identifier": "1", "label": "First group"}
+  ],
+  "next_task": {
+    "identifier": "2.1",
+    "label": "First of second",
+    "parents": [
+      {"identifier": "2", "label": "Second group"}
+    ]
+  }
 }
 ```
 
@@ -354,22 +373,40 @@ Each call must supply exactly one mutation:
 
 | Parameter | Mutation |
 | --- | --- |
-| `completed=True` or `False` | Sets the target item's stored completion state. |
+| `completed=True` or `False` | Sets a leaf state or applies the state to a branch and all descendants. |
 | `text="..."` | Replaces the target item's displayed text and preserves its children and completion state. |
 | `add_child="..."` | Appends one incomplete child beneath the target. |
 | `replace_children=("...", "...")` | Replaces every child with the supplied ordered incomplete items. An empty sequence removes all children. |
 | `add_peer_after="..."` | Inserts one incomplete sibling immediately after the target. |
 
-After a successful call, the function rewrites the JSON source, regenerates the HTML report with
-its stored title and theme, and returns the resolved JSON path again.
+After a successful call, the function rewrites the JSON source and regenerates the HTML report
+with its stored title and theme. It then returns:
+
+| Field | Meaning |
+| --- | --- |
+| `success` | Always true for a returned result; failures raise an error without a success result. |
+| `plan_path` | Resolved JSON source path to pass to the next mutation. |
+| `automatically_completed` | Newly completed ancestors, ordered from the closest parent toward the root. |
+| `next_task` | First incomplete executable leaf in depth-first plan order, or null when none remains. |
+
+`next_task` contains its dotted `identifier`, displayed `label`, and an outermost-first `parents`
+list. Parents organize work but are not selected as executable tasks while they have children.
+Their completion is derived from their children. Completing or reopening a branch applies the
+same state to its descendants. Completing the last incomplete child marks its parent complete;
+this continues through every ancestor whose direct children are all complete. Setting a child to
+incomplete clears completed ancestors. Adding or replacing children and inserting a peer also
+recomputes ancestor completion, so newly introduced incomplete work cannot remain beneath a
+completed parent.
 
 ```mermaid
 flowchart LR
     A["Returned plan JSON path"] --> B["Load and validate plan"]
     B --> C["Resolve exact path or unique title"]
     C --> D["Apply one mutation"]
-    D --> E["Regenerate HTML"]
-    E --> F["Rewrite JSON and return its path"]
+    D --> E["Cascade or clear ancestor completion"]
+    E --> F["Select first incomplete leaf"]
+    F --> G["Regenerate HTML and rewrite JSON"]
+    G --> H["Return structured result"]
 ```
 
 ## Themes

@@ -101,7 +101,16 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
                 "completed": True,
             },
         )
-        assert updated.structured_content["result"] == str(plan_path)
+        assert updated.structured_content == {
+            "success": True,
+            "plan_path": str(plan_path),
+            "automatically_completed": [],
+            "next_task": {
+                "identifier": "2",
+                "label": "Release",
+                "parents": [],
+            },
+        }
         assert 'aria-label="1 complete"' in (tmp_path / "stdio-plan.html").read_text(
             encoding="utf-8"
         )

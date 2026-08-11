@@ -30,10 +30,17 @@ remains with the explicit source, themes-folder, and output-folder parameters.
 Durable plan creation normalizes hierarchy input into a same-named JSON source and HTML rendering.
 The JSON file stores ordered item text, completion state, children, and presentation parameters.
 Mutation resolves one item by an exact dotted path or an exact unique title, applies one requested
-change, rewrites the JSON source, and regenerates the HTML. Dotted paths are parsed by component;
-they are not matched as text prefixes. The JSON source remains authoritative, while HTML remains a
-derived read-only report. Before an MCP mutation, the adapter reauthorizes any custom-theme folder
-stored in the plan because another process can edit the JSON source after creation.
+change, rewrites the JSON source, and regenerates the HTML. Branch completion is derived from its
+children. Completing or reopening a branch applies the same state to its descendants. Every
+mutation recomputes branch completion from the leaves upward, so adding or replacing children and
+inserting peers reopens affected ancestors. Completing a child therefore completes each ancestor
+whose direct children are all complete, while reopening a child clears completed ancestors. After
+mutation, a depth-first traversal selects the first incomplete leaf as the next executable task and
+returns its dotted identifier, label, and outermost-first parent context. Dotted paths are parsed
+by component; they are not matched as text prefixes. The JSON source remains authoritative, while
+HTML remains a derived read-only report. Before an MCP mutation, the adapter reauthorizes any
+custom-theme folder stored in the plan because another process can edit the JSON source after
+creation.
 
 ## Claim compatibility
 

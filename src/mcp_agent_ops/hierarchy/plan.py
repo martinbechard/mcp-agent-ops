@@ -12,6 +12,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from pydantic import BaseModel, Field
+
 from mcp_agent_ops.hierarchy.renderer import (
     _is_branch,
     _is_sequence,
@@ -81,10 +83,38 @@ class _PlanDocument:
 class _ItemLocation:
     siblings: list[_PlanItem]
     index: int
+    path: tuple[int, ...]
 
     @property
     def item(self) -> _PlanItem:
         return self.siblings[self.index]
+
+
+class HierarchyPlanItemReference(BaseModel):
+    """Identify one plan item by its current dotted number and displayed label."""
+
+    identifier: str
+    label: str
+
+
+class HierarchyPlanNextTask(HierarchyPlanItemReference):
+    """Describe the next incomplete executable leaf and its outermost-first context."""
+
+    parents: list[HierarchyPlanItemReference] = Field(default_factory=list)
+
+
+class HierarchyPlanUpdateResult(BaseModel):
+    """Report a successful durable mutation and the next executable plan task.
+
+    `automatically_completed` lists newly completed ancestors from the closest parent
+    outward. `next_task` is the first incomplete leaf in depth-first plan order, or
+    `None` after every executable leaf is complete.
+    """
+
+    success: bool
+    plan_path: Path
+    automatically_completed: list[HierarchyPlanItemReference] = Field(default_factory=list)
+    next_task: HierarchyPlanNextTask | None = None
 
 
 def _item_text(value: object) -> str:
@@ -128,11 +158,14 @@ def _new_item(text: str) -> _PlanItem:
     return _PlanItem(text=text.strip())
 
 
-def _walk_locations(items: list[_PlanItem]) -> list[_ItemLocation]:
+def _walk_locations(
+    items: list[_PlanItem], prefix: tuple[int, ...] = ()
+) -> list[_ItemLocation]:
     locations: list[_ItemLocation] = []
     for index, item in enumerate(items):
-        locations.append(_ItemLocation(items, index))
-        locations.extend(_walk_locations(item.children))
+        path = (*prefix, index + 1)
+        locations.append(_ItemLocation(items, index, path))
+        locations.extend(_walk_locations(item.children, path))
     return locations
 
 
@@ -147,7 +180,8 @@ def _locate_item(items: list[_PlanItem], target: str) -> _ItemLocation:
             index = int(part) - 1
             if index >= len(siblings):
                 raise ValueError(f"Hierarchy target '{target}' does not identify an item.")
-            location = _ItemLocation(siblings, index)
+            path = (*(() if location is None else location.path), index + 1)
+            location = _ItemLocation(siblings, index, path)
             siblings = location.item.children
         if location is None:
             raise ValueError(f"Hierarchy target '{target}' does not identify an item.")
@@ -159,6 +193,77 @@ def _locate_item(items: list[_PlanItem], target: str) -> _ItemLocation:
     if len(matches) > 1:
         raise ValueError(f"Hierarchy target '{target}' matches more than one item; use its dotted path.")
     return matches[0]
+
+
+def _location_at_path(items: list[_PlanItem], path: tuple[int, ...]) -> _ItemLocation:
+    siblings = items
+    location: _ItemLocation | None = None
+    current_path: tuple[int, ...] = ()
+    for part in path:
+        index = part - 1
+        location = _ItemLocation(siblings, index, (*current_path, part))
+        current_path = location.path
+        siblings = location.item.children
+    if location is None:
+        raise ValueError("Hierarchy item path must not be empty.")
+    return location
+
+
+def _identifier(path: tuple[int, ...]) -> str:
+    return ".".join(str(part) for part in path)
+
+
+def _item_reference(path: tuple[int, ...], item: _PlanItem) -> HierarchyPlanItemReference:
+    return HierarchyPlanItemReference(identifier=_identifier(path), label=item.text)
+
+
+def _ancestor_locations(
+    items: list[_PlanItem], path: tuple[int, ...]
+) -> list[_ItemLocation]:
+    return [
+        _location_at_path(items, path[:depth])
+        for depth in range(len(path) - 1, 0, -1)
+    ]
+
+
+def _set_subtree_completion(item: _PlanItem, complete: bool) -> None:
+    item.complete = complete
+    for child in item.children:
+        _set_subtree_completion(child, complete)
+
+
+def _recompute_branch_completion(items: list[_PlanItem]) -> None:
+    for item in items:
+        if item.children:
+            _recompute_branch_completion(item.children)
+            item.complete = all(child.complete for child in item.children)
+
+
+def _next_executable_task(items: list[_PlanItem]) -> HierarchyPlanNextTask | None:
+    def visit(
+        siblings: list[_PlanItem],
+        prefix: tuple[int, ...],
+        parents: tuple[HierarchyPlanItemReference, ...],
+    ) -> HierarchyPlanNextTask | None:
+        for index, item in enumerate(siblings, start=1):
+            path = (*prefix, index)
+            if item.children:
+                next_task = visit(
+                    item.children,
+                    path,
+                    (*parents, _item_reference(path, item)),
+                )
+                if next_task is not None:
+                    return next_task
+            elif not item.complete:
+                return HierarchyPlanNextTask(
+                    identifier=_identifier(path),
+                    label=item.text,
+                    parents=list(parents),
+                )
+        return None
+
+    return visit(items, (), ())
 
 
 def _completed_paths(items: list[_PlanItem], prefix: tuple[int, ...] = ()) -> list[str]:
@@ -269,7 +374,7 @@ def create_hierarchy_plan(
         output_folder: Optional destination folder, created when needed. The current
             directory is used when this parameter is omitted.
         completed_items: Exact dotted paths or unique item titles to mark complete in
-            the initial plan.
+            the initial plan. Selecting a branch also completes its descendants.
 
     Returns:
         The resolved path of the durable JSON plan file.
@@ -298,7 +403,8 @@ def create_hierarchy_plan(
     hierarchy = _load_hierarchy(source)
     root_label, items = _plan_root(hierarchy, title)
     for target in completed_items:
-        _locate_item(items, target).item.complete = True
+        _set_subtree_completion(_locate_item(items, target).item, True)
+    _recompute_branch_completion(items)
     stored_themes_folder = (
         None if themes_folder is None else str(Path(themes_folder).expanduser().resolve())
     )
@@ -325,7 +431,7 @@ def update_hierarchy_plan(
     add_child: str | None = None,
     replace_children: Sequence[str] | None = None,
     add_peer_after: str | None = None,
-) -> Path:
+) -> HierarchyPlanUpdateResult:
     """Apply one exact item mutation and regenerate a durable hierarchy plan.
 
     The target can be a one-based dotted path such as `1.6.1` or an exact item title.
@@ -335,7 +441,8 @@ def update_hierarchy_plan(
     Args:
         plan_path: JSON path returned by `create_hierarchy_plan`.
         target: Exact dotted path or exact unique item title.
-        completed: New completion state for the target item.
+        completed: New completion state for the target item. A branch mutation applies
+            the same state to its complete descendant subtree.
         text: Replacement text for the target item.
         add_child: Text for one child appended beneath the target item.
         replace_children: Complete ordered replacement for the target's child items.
@@ -343,7 +450,9 @@ def update_hierarchy_plan(
         add_peer_after: Text for one sibling inserted immediately after the target item.
 
     Returns:
-        The resolved JSON plan path after the plan and sibling HTML file are rewritten.
+        A successful mutation result containing the resolved JSON plan path, any
+        ancestors completed by the mutation, and the next incomplete executable leaf
+        with its parent context. The next task is null when no incomplete leaf remains.
 
     Raises:
         FileNotFoundError: If the plan or selected theme file does not exist.
@@ -364,10 +473,14 @@ def update_hierarchy_plan(
         raise ValueError("update_hierarchy_plan requires exactly one mutation.")
     document = _load_plan(plan_path)
     location = _locate_item(document.items, target)
+    ancestors_before = [
+        (ancestor, ancestor.item.complete)
+        for ancestor in _ancestor_locations(document.items, location.path)
+    ]
     if completed is not None:
         if not isinstance(completed, bool):
             raise ValueError("completed must be true or false.")
-        location.item.complete = completed
+        _set_subtree_completion(location.item, completed)
     elif text is not None:
         location.item.text = _new_item(text).text
     elif add_child is not None:
@@ -378,6 +491,21 @@ def update_hierarchy_plan(
         location.item.children = [_new_item(child) for child in replace_children]
     elif add_peer_after is not None:
         location.siblings.insert(location.index + 1, _new_item(add_peer_after))
+    _recompute_branch_completion(document.items)
+    automatically_completed = (
+        [
+            _item_reference(ancestor.path, ancestor.item)
+            for ancestor, was_complete in ancestors_before
+            if not was_complete and ancestor.item.complete
+        ]
+        if completed is True
+        else []
+    )
     _render_plan(document)
     _write_plan(document)
-    return document.path
+    return HierarchyPlanUpdateResult(
+        success=True,
+        plan_path=document.path,
+        automatically_completed=automatically_completed,
+        next_task=_next_executable_task(document.items),
+    )
