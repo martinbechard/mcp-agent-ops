@@ -192,8 +192,23 @@ def _claim_id_is_safe_worktree_component(claim_id: str) -> bool:
     return bool(WORKTREE_COMPONENT_PATTERN.fullmatch(claim_id))
 
 
+def _worktree_owned_path(repository: Path, relative: str) -> Path:
+    """Return a primary-worktree path after rejecting symlinked ancestors."""
+    primary = _primary_worktree(repository)
+    candidate = primary
+    for component in Path(relative).parts:
+        candidate /= component
+        if os.path.lexists(candidate) and candidate.is_symlink():
+            raise _ClaimStateError(
+                "unsafe_state_path",
+                "Claim-state paths must not contain symbolic links.",
+                path=str(candidate),
+            )
+    return candidate
+
+
 def _state_root(repository: Path) -> Path:
-    return (_primary_worktree(repository) / CLAIM_STATE_DIRECTORY).resolve()
+    return _worktree_owned_path(repository, CLAIM_STATE_DIRECTORY)
 
 
 def _registry_path(repository: Path) -> Path:
@@ -201,19 +216,15 @@ def _registry_path(repository: Path) -> Path:
 
 
 def _legacy_registry_path(repository: Path) -> Path:
-    return (
-        _primary_worktree(repository)
-        / REJECTED_CLAIM_STATE_DIRECTORY
-        / REGISTRY_FILE_NAME
-    ).resolve()
+    return _worktree_owned_path(
+        repository, f"{REJECTED_CLAIM_STATE_DIRECTORY}/{REGISTRY_FILE_NAME}"
+    )
 
 
 def _legacy_events_path(repository: Path) -> Path:
-    return (
-        _primary_worktree(repository)
-        / REJECTED_CLAIM_STATE_DIRECTORY
-        / EVENT_DIRECTORY_NAME
-    ).resolve()
+    return _worktree_owned_path(
+        repository, f"{REJECTED_CLAIM_STATE_DIRECTORY}/{EVENT_DIRECTORY_NAME}"
+    )
 
 
 def _state_marker_path(repository: Path) -> Path:
@@ -1035,9 +1046,9 @@ def _load_deadline_policy(repository: Path) -> dict[str, Any]:
             "project_policy_invalid",
         ) from error
     coordination = project.get("resource_coordination") if isinstance(project, dict) else None
-    if not isinstance(coordination, dict) or coordination.get("selected") != "agent-claim":
+    if not isinstance(coordination, dict) or coordination.get("selected") != "resource-claim":
         raise _DeadlineError(
-            "PROJECT.yaml resource_coordination must select agent-claim for named resource acquisition.",
+            "PROJECT.yaml resource_coordination must select resource-claim for named resource acquisition.",
             "resource_coordination.selected",
             "resource_coordination_not_selected",
         )
@@ -3189,7 +3200,11 @@ def _atomic_write(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
-        temporary.write_bytes(content)
+        descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
@@ -3199,7 +3214,11 @@ def _write_validated_archive(path: Path, compressed: bytes, expected_raw: bytes)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
-        temporary.write_bytes(compressed)
+        descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(compressed)
+            stream.flush()
+            os.fsync(stream.fileno())
         if os.environ.get("AGENT_CLAIM_TEST_FAIL_ARCHIVE_BEFORE_VALIDATE") == "1":
             raise OSError("simulated interruption before archive validation")
         if gzip.decompress(temporary.read_bytes()) != expected_raw:

@@ -34,7 +34,7 @@ def _initialize_repository(path: Path) -> None:
     (path / "PROJECT.yaml").write_text(
         yaml.safe_dump({
             "resource_coordination": {
-                "selected": "agent-claim",
+                "selected": "resource-claim",
                 "deadline_policy": {
                     "resource_classes": {
                         class_id: {

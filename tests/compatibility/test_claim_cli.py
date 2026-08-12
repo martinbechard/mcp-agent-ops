@@ -117,7 +117,7 @@ class AgentClaimTests(unittest.TestCase):
         )
         (self.repository / "PROJECT.yaml").write_text(
             "resource_coordination:\n"
-            "  selected: agent-claim\n"
+            "  selected: resource-claim\n"
             "  deadline_policy:\n"
             "    resource_classes:\n"
             f"{class_entries}\n"
