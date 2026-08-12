@@ -16,7 +16,7 @@ The server intentionally publishes small named operations so an LLM supplies dat
 | `claim_maintain_journal` | `repository` | Retain the hot UTC window and archive older complete days. |
 | `claim_report` | `repository` | Return structured contention and lifecycle metrics. |
 
-Claim results contain `exit_code` and the copied engine's structured `result`. Result schema version 2 is authoritative and includes `legacy_outcome` only when the canonical name replaces a prior result name. Every checkout resolves the reported registry path beneath the primary worktree's `.agent-ops/resource-claim` directory. Read-only status and reporting keep absent state write-free. Unsuccessful ownership attempts such as `CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED` are valid structured results rather than protocol failures.
+Claim results contain `exit_code` and the package-owned claim engine's structured `result`. Result schema version 2 is authoritative and includes `legacy_outcome` only when the canonical name replaces a prior result name. Every checkout resolves the reported registry path beneath the primary worktree's `.agent-ops/resource-claim` directory. Read-only status and reporting keep absent state write-free. Unsuccessful ownership attempts such as `CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED` are valid structured results rather than protocol failures.
 
 | Canonical outcome | Meaning and next action | Legacy outcome | Exit code |
 |---|---|---|---|

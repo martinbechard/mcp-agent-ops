@@ -536,8 +536,8 @@ def create_server(
         require complete timing evidence resolved against PROJECT.yaml. Project-files
         excludes backlog and supports caller-requested isolation only beneath the primary
         worktree's canonical .worktrees/<claim-id> root, with backlog omitted through
-        worktree-specific sparse checkout. Schema-version-2 results preserve the copied
-        claim engine's current outcomes, rejection fields, and exit codes.
+        worktree-specific sparse checkout. Schema-version-2 results preserve the
+        package-owned claim engine's current outcomes, rejection fields, and exit codes.
         """
         arguments = [
             "--repo",

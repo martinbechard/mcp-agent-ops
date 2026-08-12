@@ -213,6 +213,10 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
         assert "work_item_id" in (claim_tools["claim_acquire"].description or "")
         assert ".worktrees/<claim-id>" in (claim_tools["claim_acquire"].description or "")
         assert "backlog omitted" in (claim_tools["claim_acquire"].description or "")
+        assert "package-owned claim engine" in (
+            claim_tools["claim_acquire"].description or ""
+        )
+        assert "copied" not in (claim_tools["claim_acquire"].description or "")
         assert "work-item claim" in (claim_tools["claim_extend"].description or "")
         acquire_properties = claim_tools["claim_acquire"].inputSchema["properties"]
         assert {
