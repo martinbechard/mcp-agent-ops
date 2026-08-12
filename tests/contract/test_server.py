@@ -1130,21 +1130,15 @@ async def test_server_rejects_nested_skill_validation_symlink_escape_without_pat
     assert str(tmp_path) not in json.dumps(result.structured_content)
 
 
-@pytest.mark.parametrize("escape_kind", ["malformed", "symlink"])
-async def test_server_catalog_failures_do_not_expose_configured_paths(
+async def test_server_catalog_failure_reports_invalid_manifest_and_recovery(
     tmp_path: Path,
-    escape_kind: str,
 ) -> None:
     skills = tmp_path / "skills"
     skills.mkdir()
-    if escape_kind == "malformed":
-        skill = skills / "invalid"
-        skill.mkdir()
-        (skill / "SKILL.md").write_text("# Missing frontmatter\n", encoding="utf-8")
-    else:
-        external = tmp_path / "external"
-        _write_skill(external)
-        (skills / "example").symlink_to(external / "example", target_is_directory=True)
+    skill = skills / "invalid"
+    skill.mkdir()
+    manifest = skill / "SKILL.md"
+    manifest.write_text("# Missing frontmatter\n", encoding="utf-8")
     server = create_server([skills])
 
     async with Client(server) as client:
@@ -1152,7 +1146,35 @@ async def test_server_catalog_failures_do_not_expose_configured_paths(
             await client.call_tool("skill_list", {})
 
     assert "Configured skill catalog is invalid" in str(captured.value)
-    assert str(tmp_path) not in str(captured.value)
+    assert "SKILL.md must start with YAML frontmatter" in str(captured.value)
+    assert str(manifest) in str(captured.value)
+    assert "Correct the reported skill or remove its containing configured root" in str(captured.value)
+    assert "restart the MCP server" in str(captured.value)
+
+
+async def test_server_catalog_symlink_escape_reports_exact_root_fix(
+    tmp_path: Path,
+) -> None:
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    external = tmp_path / "external"
+    _write_skill(external)
+    linked_skill = skills / "example"
+    linked_skill.symlink_to(external / "example", target_is_directory=True)
+    server = create_server([skills])
+
+    async with Client(server) as client:
+        with pytest.raises(ToolError) as captured:
+            await client.call_tool("skill_list", {})
+
+    message = str(captured.value)
+    resolved_skill = external / "example"
+    assert f"Discovered manifest: {linked_skill / 'SKILL.md'}" in message
+    assert f"Resolved manifest: {resolved_skill / 'SKILL.md'}" in message
+    assert f"Configured skill roots: {skills}" in message
+    expected_setting = os.pathsep.join((str(skills), str(resolved_skill)))
+    assert f'MCP_AGENT_OPS_SKILL_ROOTS="{expected_setting}"' in message
+    assert "restart the MCP server" in message
 
 
 async def test_server_detection_registry_failures_do_not_expose_configured_paths(

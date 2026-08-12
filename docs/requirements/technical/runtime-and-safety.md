@@ -14,7 +14,10 @@
 - Recheck every nested skill manifest, adapter metadata file, technology source, owner manifest, owner-evidence file, and resource at its read boundary.
 - Publish project references only beneath conventional agent and skill folders when the working project is authorized.
 - Reject unsafe relative reference paths and omit non-files, non-UTF-8 content, and reference symlinks that escape their selected folder.
-- Reject nested paths that escape their configured roots through symlinks and omit configured host paths from model-facing diagnostics.
+- Reject nested paths that escape their configured roots through symlinks. Omit configured host
+  paths from ordinary model-facing results and validation diagnostics, but make catalog-construction
+  failures identify the invalid manifest, resolved target, configured roots, and exact root-setting
+  repair required from the administrator.
 - Preserve atomic in-place claim registry writes under an exclusive operating-system lock applied directly to the stable registry file.
 - Support claim coordination and ordinary stdio MCP operation on POSIX and Windows without a compatibility subsystem.
 - Keep broad claim-domain selection explicit and mutually exclusive; never infer all-files from a repository root argument.

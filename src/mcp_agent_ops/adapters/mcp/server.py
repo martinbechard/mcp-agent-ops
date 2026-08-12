@@ -34,7 +34,7 @@ from mcp_agent_ops.reference_data.models import (
     PublishedReferenceCatalog,
     ReferenceLoadResult,
 )
-from mcp_agent_ops.skill_catalog.catalog import SkillCatalog
+from mcp_agent_ops.skill_catalog.catalog import SkillCatalog, SkillRootEscapeError
 from mcp_agent_ops.skill_catalog.models import (
     BatchLoadedSkill,
     FoundSkill,
@@ -188,6 +188,36 @@ def configured_reference_roots() -> list[Path]:
     """
     raw = os.environ.get("MCP_AGENT_OPS_REFERENCE_ROOTS", "")
     return [Path(value).expanduser() for value in raw.split(os.pathsep) if value]
+
+
+def _skill_catalog_error_message(
+    error: OSError | UnicodeError | ValueError | yaml.YAMLError,
+    configured_user_roots: Sequence[Path],
+) -> str:
+    """Translate a catalog construction failure into an administrator-actionable message."""
+    if isinstance(error, SkillRootEscapeError):
+        configured_roots = os.pathsep.join(
+            str(root) for root in error.configured_roots
+        ) or "(none)"
+        suggested_roots = [
+            *(root.expanduser().resolve() for root in configured_user_roots),
+            error.resolved_manifest.parent,
+        ]
+        unique_suggested_roots = list(dict.fromkeys(suggested_roots))
+        setting = os.pathsep.join(str(root) for root in unique_suggested_roots)
+        return (
+            "Configured skill catalog is invalid. A discovered skill manifest resolves "
+            "outside every configured skill root. "
+            f"Discovered manifest: {error.discovered_manifest}. "
+            f"Resolved manifest: {error.resolved_manifest}. "
+            f"Configured skill roots: {configured_roots}. "
+            f'Set MCP_AGENT_OPS_SKILL_ROOTS="{setting}" and restart the MCP server.'
+        )
+    return (
+        f"Configured skill catalog is invalid. {error} "
+        "Correct the reported skill or remove its containing configured root from "
+        "MCP_AGENT_OPS_SKILL_ROOTS, then restart the MCP server."
+    )
 
 
 def configured_detection_registry() -> Path | None:
@@ -380,8 +410,8 @@ def create_server(
                 catalog_roots,
                 recursive_roots=project_roots,
             )
-        except (OSError, UnicodeError, ValueError, yaml.YAMLError):
-            raise ValueError("Configured skill catalog is invalid.") from None
+        except (OSError, UnicodeError, ValueError, yaml.YAMLError) as error:
+            raise ValueError(_skill_catalog_error_message(error, roots)) from None
 
     def catalog() -> SkillCatalog:
         nonlocal catalog_snapshot

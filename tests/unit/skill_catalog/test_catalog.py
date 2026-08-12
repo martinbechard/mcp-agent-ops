@@ -9,7 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from mcp_agent_ops.skill_catalog.catalog import SkillCatalog, SkillResourceError
+from mcp_agent_ops.skill_catalog.catalog import (
+    SkillCatalog,
+    SkillResourceError,
+    SkillRootEscapeError,
+)
 from mcp_agent_ops.skill_catalog.models import SkillResourceRequest
 
 
@@ -131,8 +135,12 @@ def test_catalog_rejects_skill_links_outside_configured_roots(tmp_path: Path) ->
     external = write_skill(tmp_path / "external", "linked", "linked", "Linked skill.")
     (root / "linked").symlink_to(external, target_is_directory=True)
 
-    with pytest.raises(ValueError, match="outside configured skill roots"):
+    with pytest.raises(SkillRootEscapeError) as captured:
         SkillCatalog.from_roots([root])
+
+    assert captured.value.discovered_manifest == root / "linked" / "SKILL.md"
+    assert captured.value.resolved_manifest == external / "SKILL.md"
+    assert captured.value.configured_roots == (root.resolve(),)
 
     loaded = SkillCatalog.from_roots([root, external]).read_skill("linked")
     assert loaded.entry.name == "linked"

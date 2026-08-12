@@ -47,6 +47,32 @@ class SkillResourceError(ValueError):
     """Report an unsafe, missing, or unreadable supporting skill resource."""
 
 
+class SkillRootEscapeError(ValueError):
+    """Report a discovered manifest that resolves outside every catalog root.
+
+    Catalog adapters use the structured paths to explain which installed entry escaped,
+    where it resolves, and which additional root an administrator may authorize. For
+    example, a symlink below an installed root can resolve to an exact external skill
+    directory that must be configured separately.
+
+    Attributes:
+        discovered_manifest: Manifest path found while scanning a configured root.
+        resolved_manifest: Canonical manifest path reached after resolving symlinks.
+        configured_roots: Canonical roots that were active during discovery.
+    """
+
+    def __init__(
+        self,
+        discovered_manifest: Path,
+        resolved_manifest: Path,
+        configured_roots: Sequence[Path],
+    ) -> None:
+        super().__init__("SKILL.md resolves outside configured skill roots")
+        self.discovered_manifest = discovered_manifest
+        self.resolved_manifest = resolved_manifest
+        self.configured_roots = tuple(configured_roots)
+
+
 def _digest(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
@@ -156,6 +182,7 @@ class SkillCatalog:
             A snapshot catalog including lower-precedence shadowed definition paths.
 
         Raises:
+            SkillRootEscapeError: If a discovered manifest resolves outside every root.
             ValueError: If a discovered skill has invalid or incomplete frontmatter, or
                 one recursive root contains ambiguous definitions of the same skill name.
         """
@@ -174,8 +201,10 @@ class SkillCatalog:
             for skill_file in _skill_files(root, root in resolved_recursive_roots):
                 resolved_skill_file = skill_file.resolve()
                 if not any(_within_root(resolved_skill_file, allowed) for allowed in resolved_roots):
-                    raise ValueError(
-                        f"SKILL.md resolves outside configured skill roots: {skill_file}"
+                    raise SkillRootEscapeError(
+                        discovered_manifest=skill_file,
+                        resolved_manifest=resolved_skill_file,
+                        configured_roots=resolved_roots,
                     )
                 content_bytes = resolved_skill_file.read_bytes()
                 content = content_bytes.decode("utf-8")

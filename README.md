@@ -206,6 +206,12 @@ The server uses stdio by default. Configure these boundaries before exposing it 
 
 When the server starts with its working directory beneath a configured workspace root, it automatically overlays recursively discovered skills from `<cwd>/.agents/skills` and `<cwd>/.codex/skills` ahead of the configured user roots. The `.agents` project root has precedence over the `.codex` project root. Nested project skill directories are supported; duplicate skill names inside either one project root are rejected as ambiguous. `skill_refresh` rescans both project and configured roots.
 
+If a discovered skill is a symlink whose `SKILL.md` resolves outside every configured root, catalog
+operations report the discovered manifest, resolved target, current roots, and an exact
+`MCP_AGENT_OPS_SKILL_ROOTS` value to authorize the target. Correct the setting and restart the MCP
+server before retrying. Other invalid catalog entries report the underlying manifest or read error
+and the containing root that must be corrected or removed.
+
 `skill_read` and `skill_load` accept the optional `include_extensions` switch. Its default is
 `false`. When enabled for a base skill such as `python`, the loader searches the same precedence
 order for `python.extension` and appends that complete skill when found. The base and extension

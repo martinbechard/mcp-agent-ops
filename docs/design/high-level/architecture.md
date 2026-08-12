@@ -60,6 +60,11 @@ The server provides path-free catalog listing and content retrieval, but it does
 
 One catalog snapshot is built lazily per server process. When the process working directory resolves beneath an allowed workspace, the adapter prepends recursive `<cwd>/.agents/skills` and `<cwd>/.codex/skills` project roots to the configured user roots. This gives project definitions precedence without moving project-context rules into the catalog domain. Ordinary list and load operations reuse the snapshot, eliminating repeated tree scans. `skill_refresh` builds a complete replacement outside the publication lock and then swaps it atomically, so readers observe either the old or new revision. Resource paths are part of the catalog revision; resource bytes remain progressively loaded and carry an independent digest.
 
+Catalog construction is an administrator-owned configuration boundary. When an invalid manifest or
+escaping skill symlink prevents construction, the adapter reports the discovered and resolved paths,
+the active roots, and the exact `MCP_AGENT_OPS_SKILL_ROOTS` repair. Routine catalog results remain
+path-free.
+
 Extension loading is an opt-in catalog-domain composition. For each requested base name, the
 catalog can independently resolve `<base-name>.extension` from the same immutable snapshot. The
 loader appends the complete extension after the base document and returns a digest of the combined
@@ -85,8 +90,9 @@ model-readable. Every reference candidate must resolve beneath its selected fold
 regular UTF-8 file. Model-supplied repository, project, verification, validation, worktree,
 hierarchy source, theme, output, and plan paths are resolved only beneath their boundaries after
 symlink resolution. Skill validation and technology detection repeat containment at each nested
-read boundary. Model-facing reference, catalog, validation, and detection results omit configured
-host paths; `skill_find` is the narrow operation that intentionally returns one selected manifest
+read boundary. Routine model-facing reference, catalog, validation, and detection results omit
+configured host paths; catalog-construction failures expose the exact administrator-owned paths
+needed to repair invalid configuration, and `skill_find` intentionally returns one selected manifest
 path. Hierarchy tools return resolved output and plan paths because later agent calls use those
 paths as mutation inputs. The boundary is reproducibility and host-state protection for ordinary
 agent work; it is not a general hostile-code sandbox.

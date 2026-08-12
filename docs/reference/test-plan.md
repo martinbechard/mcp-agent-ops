@@ -49,7 +49,9 @@
 - CLI and MCP parity for the canonical registry path and structured migration stops.
 - Rejection of repository, worktree, verification, validation, detection, hierarchy, and persisted
   hierarchy-theme paths outside configured roots.
-- Path-free reference and skill catalog errors plus path-free skill-validation and technology-detection results.
+- Actionable skill-catalog configuration errors that identify invalid manifests, resolved symlink
+  targets, configured roots, and exact root-setting repairs; path-free reference errors plus
+  path-free skill-validation and technology-detection results.
 - Digest-only tool audit lifecycle, exclusive audit-root confinement, safe shared parent and subagent streams, content omission, and real stdio evidence.
 - Skill catalog and skill-content MCP resources.
 
