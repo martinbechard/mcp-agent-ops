@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Converts copied claim-engine commands into structured in-process results for adapters.
+# Summary: Converts package-owned claim-engine commands into structured in-process adapter results.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 
@@ -13,14 +13,14 @@ from mcp_agent_ops.claims import engine
 
 
 class ClaimCommandResult(BaseModel):
-    """Return one copied claim-engine exit code and structured JSON result."""
+    """Return one package claim-engine exit code and structured JSON result."""
 
     exit_code: int
     result: dict[str, Any]
 
 
 def run_claim_command(arguments: Sequence[str]) -> ClaimCommandResult:
-    """Execute the copied claim engine through its structured dispatch boundary.
+    """Execute the package-owned claim engine through its structured dispatch boundary.
 
     Args:
         arguments: Complete claim arguments without the executable name.

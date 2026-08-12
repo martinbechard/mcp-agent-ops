@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Martin.Bechard@DevConsult.ca
 # AI attribution: Generated with AI assistance.
-# Summary: Preserves the direct claim command while delegating all behavior to the copied engine.
+# Summary: Preserves the direct claim CLI while delegating behavior to the package-owned engine.
 # Design: docs/design/high-level/architecture.md
 # Test plan: docs/reference/test-plan.md
 

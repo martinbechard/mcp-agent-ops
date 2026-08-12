@@ -21,6 +21,7 @@ from mcp.types import CallToolRequestParams
 
 from mcp_agent_ops.adapters.mcp.audit import ToolAuditLog, ToolAuditMiddleware
 from mcp_agent_ops.adapters.mcp.server import create_server
+from mcp_agent_ops.claims import engine as claim_engine
 from mcp_agent_ops.claims.engine import dispatch as dispatch_claim
 from mcp_agent_ops.reference_data.catalog import ReferenceCatalog
 from mcp_agent_ops.skill_catalog.catalog import SkillCatalog
@@ -683,6 +684,56 @@ async def test_claim_mcp_and_cli_share_state_path_and_migration_stop(tmp_path: P
     assert cli_stop["outcome"] == "CLAIM_STATE_MIGRATION_BLOCKED"
     assert cli_stop["reason"] == "contradictory_dual_state"
     assert mcp_stop.structured_content == {"exit_code": 3, "result": cli_stop}
+
+
+async def test_claim_mcp_installs_fresh_legacy_barriers_before_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The public MCP mutation closes both rejected paths before fresh completion."""
+    repository = tmp_path / "repository"
+    skills = tmp_path / "skills"
+    _initialize_repository(repository)
+    _write_skill(skills)
+    server = create_server([skills], workspace_roots=[tmp_path])
+    state_root = repository / ".agent-ops" / "resource-claim"
+    legacy_root = repository / ".codex" / "agent-claim"
+    legacy_registry = legacy_root / "agent-claims.json"
+    legacy_events = legacy_root / "agent-claim-events"
+    original_write_state_marker = claim_engine._write_state_marker
+
+    def require_barriers_before_completion(
+        target_repository: Path,
+        status: str,
+        origin: str,
+    ) -> None:
+        if status == "complete" and origin == "fresh":
+            assert claim_engine._legacy_registry_is_marker(legacy_registry)
+            assert claim_engine._legacy_events_is_marker(legacy_events)
+        original_write_state_marker(target_repository, status, origin)
+
+    monkeypatch.setattr(claim_engine, "_write_state_marker", require_barriers_before_completion)
+    async with Client(server) as client:
+        reset = await client.call_tool("claim_reset", {"repository": str(repository)})
+
+    assert reset.structured_content["exit_code"] == 0
+    assert reset.structured_content["result"]["outcome"] == "RESET"
+    assert json.loads((state_root / "state.json").read_text(encoding="utf-8")) == {
+        "migration_status": "complete",
+        "origin": "fresh",
+        "schema_version": 1,
+        "state_layout_version": 2,
+    }
+    assert legacy_registry.is_dir()
+    assert (legacy_registry / "state.json").read_bytes() == (
+        claim_engine._legacy_marker_payload("registry")
+    )
+    assert legacy_events.is_file()
+    assert legacy_events.read_bytes() == claim_engine._legacy_marker_payload("events")
+    with pytest.raises(IsADirectoryError):
+        legacy_registry.write_text('{"claims": []}\n', encoding="utf-8")
+    with pytest.raises(FileExistsError):
+        legacy_events.mkdir()
 
 
 async def test_server_reuses_one_catalog_snapshot_until_explicit_refresh(tmp_path: Path) -> None:
