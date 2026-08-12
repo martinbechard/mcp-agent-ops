@@ -246,10 +246,10 @@ class AgentClaimTests(unittest.TestCase):
         """Return the pre-migration event-history path."""
         return self.repository / ".codex" / "agent-claim" / "agent-claim-events"
 
-    def assert_legacy_registry_marker(self) -> None:
-        """Require the exact platform-specific incompatible registry marker."""
+    def assert_legacy_registry_marker(self, *, origin: str) -> None:
+        """Require the exact origin-specific incompatible registry marker."""
         legacy_registry = self.legacy_registry_path()
-        if os.name == "nt":
+        if origin == "legacy" and os.name == "nt":
             self.assertTrue(legacy_registry.is_file())
             marker_path = legacy_registry
         else:
@@ -262,6 +262,19 @@ class AgentClaimTests(unittest.TestCase):
                 "migrated": "registry",
             },
             json.loads(marker_path.read_text(encoding="utf-8")),
+        )
+
+    def assert_legacy_event_marker(self) -> None:
+        """Require the exact regular-file barrier at the rejected event path."""
+        legacy_events = self.legacy_event_root()
+        self.assertTrue(legacy_events.is_file())
+        self.assertEqual(
+            {
+                "schema_version": 1,
+                "state_layout_version": 2,
+                "migrated": "events",
+            },
+            json.loads(legacy_events.read_text(encoding="utf-8")),
         )
 
     def hot_directory(self) -> Path:
@@ -377,8 +390,8 @@ class AgentClaimTests(unittest.TestCase):
             },
             json.loads(self.state_marker_path().read_text(encoding="utf-8")),
         )
-        self.assert_legacy_registry_marker()
-        self.assertTrue(self.legacy_event_root().is_file())
+        self.assert_legacy_registry_marker(origin="fresh")
+        self.assert_legacy_event_marker()
 
     def test_empty_legacy_state_migrates_to_exact_cross_implementation_markers(self) -> None:
         self.legacy_registry_path().write_text('{"claims": []}\n', encoding="utf-8")
@@ -398,16 +411,8 @@ class AgentClaimTests(unittest.TestCase):
             },
             json.loads(self.state_marker_path().read_text(encoding="utf-8")),
         )
-        self.assert_legacy_registry_marker()
-        self.assertTrue(self.legacy_event_root().is_file())
-        self.assertEqual(
-            {
-                "schema_version": 1,
-                "state_layout_version": 2,
-                "migrated": "events",
-            },
-            json.loads(self.legacy_event_root().read_text(encoding="utf-8")),
-        )
+        self.assert_legacy_registry_marker(origin="legacy")
+        self.assert_legacy_event_marker()
         status = self.claim("status")
         self.assertEqual(0, status.returncode, status.stderr)
         self.assertEqual(["migrated"], [claim["claim_id"] for claim in self.output(status)["claims"]])
@@ -536,8 +541,8 @@ class AgentClaimTests(unittest.TestCase):
 
         migrated = self.claim(*self.acquire_arguments("new"), "--file", "src/one.py")
         self.assertEqual(0, migrated.returncode, migrated.stderr)
-        self.assert_legacy_registry_marker()
-        self.assertTrue(self.legacy_event_root().is_file())
+        self.assert_legacy_registry_marker(origin="legacy")
+        self.assert_legacy_event_marker()
 
     @unittest.skipIf(
         os.name == "nt",
