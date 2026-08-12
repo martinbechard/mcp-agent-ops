@@ -666,13 +666,14 @@ async def test_claim_mcp_and_cli_share_state_path_and_migration_stop(tmp_path: P
     assert cli_status_code == 0
     assert mcp_status.structured_content == {"exit_code": 0, "result": cli_status}
     assert cli_status["registry"] == str(
-        (repository / ".codex" / "agent-claim" / "agent-claims.json").resolve()
+        (repository / ".agent-ops" / "resource-claim" / "agent-claims.json").resolve()
     )
 
-    canonical_registry = repository / ".codex" / "agent-claim" / "agent-claims.json"
+    canonical_registry = repository / ".agent-ops" / "resource-claim" / "agent-claims.json"
     canonical_registry.parent.mkdir(parents=True)
     canonical_registry.write_text('{"claims":[{"claim_id":"canonical-live"}]}', encoding="utf-8")
-    legacy_registry = repository / ".git" / "agent-claims.json"
+    legacy_registry = repository / ".codex" / "agent-claim" / "agent-claims.json"
+    legacy_registry.parent.mkdir(parents=True)
     legacy_registry.write_text('{"claims":[{"claim_id":"legacy-live"}]}', encoding="utf-8")
 
     cli_stop, cli_stop_code = dispatch_claim(["--repo", str(repository), "status"])

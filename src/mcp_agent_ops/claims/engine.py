@@ -38,8 +38,9 @@ ISOLATION_SETUP_EXIT_CODE = 4
 BACKLOG_ROOT_DIRECTORY = "backlog"
 WORKTREE_ROOT_DIRECTORY = ".worktrees"
 WORKTREE_IGNORE_PATTERN = "/.worktrees/"
-CLAIM_STATE_DIRECTORY = ".codex/agent-claim"
-CLAIM_STATE_IGNORE_PATTERN = "/.codex/agent-claim/"
+CLAIM_STATE_DIRECTORY = ".agent-ops/resource-claim"
+CLAIM_STATE_IGNORE_PATTERN = "/.agent-ops/resource-claim/"
+REJECTED_CLAIM_STATE_DIRECTORY = ".codex/agent-claim"
 ISOLATED_SPARSE_CHECKOUT_PATTERNS = ("/*", "!/backlog/")
 REGISTRY_FILE_NAME = "agent-claims.json"
 EVENT_DIRECTORY_NAME = "agent-claim-events"
@@ -200,7 +201,19 @@ def _registry_path(repository: Path) -> Path:
 
 
 def _legacy_registry_path(repository: Path) -> Path:
-    return _git_common_directory(repository) / REGISTRY_FILE_NAME
+    return (
+        _primary_worktree(repository)
+        / REJECTED_CLAIM_STATE_DIRECTORY
+        / REGISTRY_FILE_NAME
+    ).resolve()
+
+
+def _legacy_events_path(repository: Path) -> Path:
+    return (
+        _primary_worktree(repository)
+        / REJECTED_CLAIM_STATE_DIRECTORY
+        / EVENT_DIRECTORY_NAME
+    ).resolve()
 
 
 def _state_marker_path(repository: Path) -> Path:
@@ -481,7 +494,7 @@ def _windows_in_progress_live_legacy_registry(
 def _move_legacy_events(repository: Path) -> None:
     state_root = _state_root(repository)
     events_path = state_root / EVENT_DIRECTORY_NAME
-    legacy_events = _git_common_directory(repository) / EVENT_DIRECTORY_NAME
+    legacy_events = _legacy_events_path(repository)
 
     if _legacy_events_is_marker(legacy_events):
         events_path.mkdir(parents=True, exist_ok=True)
@@ -521,9 +534,8 @@ def _finish_legacy_migration(
     locked_legacy_file: IO[str] | None = None,
 ) -> None:
     registry_path = _state_root(repository) / REGISTRY_FILE_NAME
-    legacy_root = _git_common_directory(repository)
-    legacy_registry = legacy_root / REGISTRY_FILE_NAME
-    legacy_events = legacy_root / EVENT_DIRECTORY_NAME
+    legacy_registry = _legacy_registry_path(repository)
+    legacy_events = _legacy_events_path(repository)
 
     if not registry_path.exists():
         _create_empty_registry(registry_path)
@@ -572,8 +584,6 @@ def _resolve_registry_path_once(
     claim_id: str | None,
 ) -> Path | None:
     registry_path = _registry_path(repository)
-    legacy_registry = _legacy_registry_path(repository)
-    legacy_events = _git_common_directory(repository) / EVENT_DIRECTORY_NAME
     marker = _state_marker(repository)
 
     if marker and marker["migration_status"] == "complete":
@@ -583,27 +593,14 @@ def _resolve_registry_path_once(
                 "The completed claim-state marker has no canonical registry.",
                 registry=str(registry_path),
             )
-        if marker["origin"] == "fresh":
-            if os.path.lexists(legacy_registry) or os.path.lexists(legacy_events):
-                raise _ClaimStateError(
-                    "contradictory_dual_state",
-                    "Fresh canonical claim state conflicts with state later created at a legacy path.",
-                    canonical_registry=str(registry_path),
-                    legacy_registry=str(legacy_registry),
-                    legacy_events=str(legacy_events),
-                )
-        elif not (
-            _legacy_registry_is_marker(legacy_registry)
-            and _legacy_events_is_marker(legacy_events)
-        ):
-            raise _ClaimStateError(
-                "contradictory_dual_state",
-                "Migrated claim state is missing an exact incompatible legacy-path marker.",
-                canonical_registry=str(registry_path),
-                legacy_registry=str(legacy_registry),
-                legacy_events=str(legacy_events),
-            )
+        legacy_registry = registry_path.parent / ".completed-legacy-registry-boundary"
+        legacy_events = registry_path.parent / ".completed-legacy-events-boundary"
+        # A durable complete marker is the permission boundary. Steady-state
+        # operations must not probe harness-owned rejected storage.
         return registry_path
+
+    legacy_registry = _legacy_registry_path(repository)
+    legacy_events = _legacy_events_path(repository)
 
     if marker and marker["migration_status"] == "in_progress":
         if _windows_legacy_tombstone_required():
@@ -745,17 +742,8 @@ def _resolve_registry_path(
 def _read_only_registry_once(repository: Path) -> tuple[Path, dict[str, Any]] | None:
     """Read claim state under its existing lock without creating or migrating storage."""
     registry_path = _registry_path(repository)
-    legacy_registry = _legacy_registry_path(repository)
-    legacy_events = _git_common_directory(repository) / EVENT_DIRECTORY_NAME
     marker = _state_marker(repository)
 
-    if marker and marker["migration_status"] == "in_progress":
-        raise _ClaimStateError(
-            "migration_interrupted",
-            "Claim-state migration is incomplete; retry with the next mutating operation.",
-            canonical_registry=str(registry_path),
-            legacy_registry=str(legacy_registry),
-        )
     if marker and marker["migration_status"] == "complete":
         if not registry_path.exists():
             raise _ClaimStateError(
@@ -763,27 +751,19 @@ def _read_only_registry_once(repository: Path) -> tuple[Path, dict[str, Any]] | 
                 "The completed claim-state marker has no canonical registry.",
                 registry=str(registry_path),
             )
-        if marker["origin"] == "fresh":
-            if os.path.lexists(legacy_registry) or os.path.lexists(legacy_events):
-                raise _ClaimStateError(
-                    "contradictory_dual_state",
-                    "Fresh canonical claim state conflicts with state later created at a legacy path.",
-                    canonical_registry=str(registry_path),
-                    legacy_registry=str(legacy_registry),
-                    legacy_events=str(legacy_events),
-                )
-        elif not (
-            _legacy_registry_is_marker(legacy_registry)
-            and _legacy_events_is_marker(legacy_events)
-        ):
+        legacy_registry = registry_path.parent / ".completed-legacy-registry-boundary"
+        legacy_events = registry_path.parent / ".completed-legacy-events-boundary"
+    else:
+        legacy_registry = _legacy_registry_path(repository)
+        legacy_events = _legacy_events_path(repository)
+        if marker and marker["migration_status"] == "in_progress":
             raise _ClaimStateError(
-                "contradictory_dual_state",
-                "Migrated claim state is missing an exact incompatible legacy-path marker.",
+                "migration_interrupted",
+                "Claim-state migration is incomplete; retry with the next mutating operation.",
                 canonical_registry=str(registry_path),
                 legacy_registry=str(legacy_registry),
-                legacy_events=str(legacy_events),
             )
-    elif registry_path.exists() and (
+    if not (marker and marker["migration_status"] == "complete") and registry_path.exists() and (
         os.path.lexists(legacy_registry) or os.path.lexists(legacy_events)
     ):
         raise _ClaimStateError(
@@ -3503,13 +3483,12 @@ def _report(args: argparse.Namespace) -> int:
     end = _now()
     start = end - delta
     registry_path, data = _read_only_registry(repository)
-    legacy_events = _git_common_directory(repository) / EVENT_DIRECTORY_NAME
     state_marker = _state_marker(repository)
-    event_state_root = (
-        _git_common_directory(repository)
-        if state_marker is None and legacy_events.is_dir()
-        else registry_path.parent
-    )
+    if state_marker is None:
+        legacy_events = _legacy_events_path(repository)
+        event_state_root = legacy_events.parent if legacy_events.is_dir() else registry_path.parent
+    else:
+        event_state_root = registry_path.parent
     events, coverage_gaps = _load_events(event_state_root)
     filtered = [
         event

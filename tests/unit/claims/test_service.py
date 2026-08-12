@@ -92,7 +92,7 @@ def _acquire_readme(repository: Path, claim_id: str = "owner") -> service.ClaimC
 
 
 def _prepare_interrupted_legacy_migration(repository: Path) -> Path:
-    state_root = repository / ".codex" / "agent-claim"
+    state_root = repository / ".agent-ops" / "resource-claim"
     state_root.mkdir(parents=True)
     (state_root / "agent-claims.json").write_bytes(_legacy_registry_payload())
     (state_root / "state.json").write_bytes(
@@ -103,7 +103,9 @@ def _prepare_interrupted_legacy_migration(repository: Path) -> Path:
             "origin": "legacy",
         }) + "\n").encode("utf-8")
     )
-    return repository / ".git" / "agent-claims.json"
+    legacy_registry = repository / ".codex" / "agent-claim" / "agent-claims.json"
+    legacy_registry.parent.mkdir(parents=True, exist_ok=True)
+    return legacy_registry
 
 
 def test_unrelated_repository_claim_calls_are_not_process_serialized(
@@ -230,7 +232,9 @@ def test_migration_reads_registries_from_their_locked_descriptors(
     repository = tmp_path / "repository"
     _initialize_repository(repository)
     if legacy_state:
-        (repository / ".git" / "agent-claims.json").write_bytes(b'{"claims": []}\n')
+        legacy_registry = repository / ".codex" / "agent-claim" / "agent-claims.json"
+        legacy_registry.parent.mkdir(parents=True)
+        legacy_registry.write_bytes(b'{"claims": []}\n')
 
     locked_paths: set[Path] = set()
     original_exclusive_text_file = engine.exclusive_text_file
@@ -271,7 +275,7 @@ def test_migration_reads_registries_from_their_locked_descriptors(
 
     assert result.exit_code == 0
     marker = json.loads(
-        (repository / ".codex" / "agent-claim" / "state.json").read_text(
+        (repository / ".agent-ops" / "resource-claim" / "state.json").read_text(
             encoding="utf-8"
         )
     )
@@ -285,10 +289,11 @@ def test_windows_migration_writes_exact_tombstone_in_place_before_event_history(
 ) -> None:
     repository = tmp_path / "repository"
     _initialize_repository(repository)
-    legacy_registry = repository / ".git" / "agent-claims.json"
+    legacy_registry = repository / ".codex" / "agent-claim" / "agent-claims.json"
+    legacy_registry.parent.mkdir(parents=True, exist_ok=True)
     legacy_registry.write_bytes(_legacy_registry_payload())
     original_inode = legacy_registry.stat().st_ino
-    legacy_events = repository / ".git" / "agent-claim-events"
+    legacy_events = repository / ".codex" / "agent-claim" / "agent-claim-events"
     legacy_events.mkdir()
     (legacy_events / "events.jsonl").write_bytes(b"")
     original_rename = os.rename
@@ -328,7 +333,7 @@ def test_regular_file_tombstone_is_cross_platform_and_rejects_old_registry_parse
     _initialize_repository(repository)
     legacy_registry = _prepare_interrupted_legacy_migration(repository)
     legacy_registry.write_bytes(engine._legacy_marker_payload("registry"))
-    legacy_events = repository / ".git" / "agent-claim-events"
+    legacy_events = repository / ".codex" / "agent-claim" / "agent-claim-events"
     legacy_events.write_bytes(engine._legacy_marker_payload("events"))
     engine._write_state_marker(repository, "complete", "legacy")
 
@@ -350,7 +355,7 @@ def test_windows_migration_recovers_interrupted_empty_legacy_registry(
     legacy_registry = _prepare_interrupted_legacy_migration(repository)
     legacy_registry.write_bytes(_legacy_registry_payload())
     original_inode = legacy_registry.stat().st_ino
-    legacy_events = repository / ".git" / "agent-claim-events"
+    legacy_events = repository / ".codex" / "agent-claim" / "agent-claim-events"
     legacy_events.mkdir()
     monkeypatch.setattr(engine, "_windows_legacy_tombstone_required", lambda: True)
 
@@ -361,7 +366,7 @@ def test_windows_migration_recovers_interrupted_empty_legacy_registry(
     assert legacy_registry.read_bytes() == engine._legacy_marker_payload("registry")
     assert legacy_events.is_file()
     assert json.loads(
-        (repository / ".codex" / "agent-claim" / "state.json").read_text(
+        (repository / ".agent-ops" / "resource-claim" / "state.json").read_text(
             encoding="utf-8"
         )
     )["migration_status"] == "complete"
@@ -377,7 +382,7 @@ def test_windows_interrupted_migration_preserves_live_legacy_claims_and_events(
     live_payload = _legacy_registry_payload("still-live")
     legacy_registry.write_bytes(live_payload)
     original_inode = legacy_registry.stat().st_ino
-    legacy_events = repository / ".git" / "agent-claim-events"
+    legacy_events = repository / ".codex" / "agent-claim" / "agent-claim-events"
     legacy_events.mkdir()
     monkeypatch.setattr(engine, "_windows_legacy_tombstone_required", lambda: True)
 
@@ -388,7 +393,7 @@ def test_windows_interrupted_migration_preserves_live_legacy_claims_and_events(
     assert legacy_registry.stat().st_ino == original_inode
     assert legacy_registry.read_bytes() == live_payload
     assert legacy_events.is_dir()
-    assert not (repository / ".codex" / "agent-claim" / "agent-claim-events").exists()
+    assert not (repository / ".agent-ops" / "resource-claim" / "agent-claim-events").exists()
 
 
 def test_windows_migration_rejects_nonempty_legacy_metadata(
@@ -397,7 +402,8 @@ def test_windows_migration_rejects_nonempty_legacy_metadata(
 ) -> None:
     repository = tmp_path / "repository"
     _initialize_repository(repository)
-    legacy_registry = repository / ".git" / "agent-claims.json"
+    legacy_registry = repository / ".codex" / "agent-claim" / "agent-claims.json"
+    legacy_registry.parent.mkdir(parents=True, exist_ok=True)
     legacy_payload = b'{"claims":[],"unexpected":"state"}\n'
     legacy_registry.write_bytes(legacy_payload)
     original_inode = legacy_registry.stat().st_ino
@@ -409,7 +415,7 @@ def test_windows_migration_rejects_nonempty_legacy_metadata(
     assert result.result["reason"] == "contradictory_dual_state"
     assert legacy_registry.stat().st_ino == original_inode
     assert legacy_registry.read_bytes() == legacy_payload
-    assert not (repository / ".codex" / "agent-claim").exists()
+    assert not (repository / ".agent-ops" / "resource-claim").exists()
 
 
 def test_stale_legacy_release_re_resolves_after_concurrent_drain_and_migration(
@@ -418,7 +424,8 @@ def test_stale_legacy_release_re_resolves_after_concurrent_drain_and_migration(
 ) -> None:
     repository = tmp_path / "repository"
     _initialize_repository(repository)
-    legacy_registry = repository / ".git" / "agent-claims.json"
+    legacy_registry = repository / ".codex" / "agent-claim" / "agent-claims.json"
+    legacy_registry.parent.mkdir(parents=True, exist_ok=True)
     legacy_registry.write_text(
         json.dumps({
             "claims": [{
@@ -524,7 +531,8 @@ def test_locked_stale_legacy_inode_is_rejected_at_each_lock_handoff(
 ) -> None:
     repository = tmp_path / "repository"
     _initialize_repository(repository)
-    legacy_registry = repository / ".git" / "agent-claims.json"
+    legacy_registry = repository / ".codex" / "agent-claim" / "agent-claims.json"
+    legacy_registry.parent.mkdir(parents=True, exist_ok=True)
     legacy_registry.write_text(
         json.dumps({
             "claims": [{
@@ -617,7 +625,7 @@ def test_locked_stale_legacy_inode_is_rejected_at_each_lock_handoff(
     assert stale_results[0].exit_code == 1
     assert stale_results[0].result["outcome"] == "CLAIM_NOT_FOUND"
     marker = json.loads(
-        (repository / ".codex" / "agent-claim" / "state.json").read_text(
+        (repository / ".agent-ops" / "resource-claim" / "state.json").read_text(
             encoding="utf-8"
         )
     )
@@ -643,7 +651,8 @@ def test_read_only_stale_legacy_inode_re_resolves_after_marker_handoff(
 ) -> None:
     repository = tmp_path / "repository"
     _initialize_repository(repository)
-    legacy_registry = repository / ".git" / "agent-claims.json"
+    legacy_registry = repository / ".codex" / "agent-claim" / "agent-claims.json"
+    legacy_registry.parent.mkdir(parents=True, exist_ok=True)
     legacy_registry.write_text(
         json.dumps({
             "claims": [{
@@ -749,7 +758,8 @@ def test_repeated_legacy_lock_handoffs_fail_closed_after_bounded_retries(
 ) -> None:
     repository = tmp_path / "repository"
     _initialize_repository(repository)
-    legacy_registry = repository / ".git" / "agent-claims.json"
+    legacy_registry = repository / ".codex" / "agent-claim" / "agent-claims.json"
+    legacy_registry.parent.mkdir(parents=True, exist_ok=True)
     legacy_registry.write_text(
         json.dumps({
             "claims": [{
@@ -784,7 +794,7 @@ def test_repeated_legacy_lock_handoffs_fail_closed_after_bounded_retries(
     assert result.result["reason"] == expected_reason
     assert result.result["registry_unchanged"] is True
     assert legacy_registry.read_bytes() == before
-    assert not (repository / ".codex" / "agent-claim").exists()
+    assert not (repository / ".agent-ops" / "resource-claim").exists()
 
 
 def test_repeated_operation_lock_handoffs_fail_closed_after_bounded_retries(
@@ -808,7 +818,7 @@ def test_repeated_operation_lock_handoffs_fail_closed_after_bounded_retries(
         "--file",
         "README.md",
     ])
-    registry = repository / ".codex" / "agent-claim" / "agent-claims.json"
+    registry = repository / ".agent-ops" / "resource-claim" / "agent-claims.json"
     before = registry.read_bytes()
     identity_checks = 0
     handler_calls = 0
@@ -869,7 +879,7 @@ def test_operation_lock_does_not_retry_after_handler_failure(
         "--file",
         "README.md",
     ])
-    registry = repository / ".codex" / "agent-claim" / "agent-claims.json"
+    registry = repository / ".agent-ops" / "resource-claim" / "agent-claims.json"
     before = registry.read_bytes()
     identity_checks = 0
     original_identity_check = engine._locked_file_matches_path

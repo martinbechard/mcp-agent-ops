@@ -94,7 +94,7 @@ class AgentClaimTests(unittest.TestCase):
         (self.repository / "src").mkdir()
         (self.repository / "backlog").mkdir()
         (self.repository / ".gitignore").write_text(
-            "/.worktrees/\n/.codex/agent-claim/\n",
+            "/.worktrees/\n/.agent-ops/resource-claim/\n",
             encoding="utf-8",
         )
         (self.repository / "README.md").write_text("baseline\n", encoding="utf-8")
@@ -226,7 +226,7 @@ class AgentClaimTests(unittest.TestCase):
 
     def state_root(self) -> Path:
         """Return the canonical primary-worktree claim-state root."""
-        return self.repository / ".codex" / "agent-claim"
+        return self.repository / ".agent-ops" / "resource-claim"
 
     def registry_path(self) -> Path:
         """Return the canonical live registry path."""
@@ -238,11 +238,13 @@ class AgentClaimTests(unittest.TestCase):
 
     def legacy_registry_path(self) -> Path:
         """Return the pre-migration registry path."""
-        return self.repository / ".git" / "agent-claims.json"
+        path = self.repository / ".codex" / "agent-claim" / "agent-claims.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
 
     def legacy_event_root(self) -> Path:
         """Return the pre-migration event-history path."""
-        return self.repository / ".git" / "agent-claim-events"
+        return self.repository / ".codex" / "agent-claim" / "agent-claim-events"
 
     def assert_legacy_registry_marker(self) -> None:
         """Require the exact platform-specific incompatible registry marker."""

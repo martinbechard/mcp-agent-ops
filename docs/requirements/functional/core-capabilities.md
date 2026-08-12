@@ -4,7 +4,7 @@
 
 - The service exposes structured operations for claim status, acquisition, extension, deadline extension, heartbeat, release, reset, journal maintenance, and contention reporting.
 - MCP and CLI claim operations preserve the stable outcomes and exit-code semantics of the existing `agent-claim` command.
-- Claims from primary and linked worktrees coordinate through one registry beneath the primary worktree's ignored `.codex/agent-claim` directory.
+- Claims from primary and linked worktrees coordinate through one registry beneath the primary worktree's ignored `.agent-ops/resource-claim` directory.
 - Read-only status and reporting do not create absent state. Empty legacy state migrates recoverably on the first mutation; live or contradictory legacy state produces a structured non-mutating stop except for exact live-claim release.
 - Work-item claims contend by exact provider ID, preserve `work_item_id` and `activity`, and require a terminal release disposition.
 - Named resource claims require configured timing evidence, calculate deadline status, and support evidenced hard-stop extension within policy.

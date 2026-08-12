@@ -16,7 +16,7 @@ The server intentionally publishes small named operations so an LLM supplies dat
 | `claim_maintain_journal` | `repository` | Retain the hot UTC window and archive older complete days. |
 | `claim_report` | `repository` | Return structured contention and lifecycle metrics. |
 
-Claim results contain `exit_code` and the copied engine's structured `result`. Result schema version 2 is authoritative and includes `legacy_outcome` only when the canonical name replaces a prior result name. Every checkout resolves the reported registry path beneath the primary worktree's `.codex/agent-claim` directory. Read-only status and reporting keep absent state write-free. Unsuccessful ownership attempts such as `CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED` are valid structured results rather than protocol failures.
+Claim results contain `exit_code` and the copied engine's structured `result`. Result schema version 2 is authoritative and includes `legacy_outcome` only when the canonical name replaces a prior result name. Every checkout resolves the reported registry path beneath the primary worktree's `.agent-ops/resource-claim` directory. Read-only status and reporting keep absent state write-free. Unsuccessful ownership attempts such as `CLAIM_SCOPE_CONFLICT_WAIT_REQUIRED` are valid structured results rather than protocol failures.
 
 | Canonical outcome | Meaning and next action | Legacy outcome | Exit code |
 |---|---|---|---|
@@ -42,7 +42,7 @@ Explicit backlog files and trees remain compatible inputs and are reported with 
 
 Work-item acquisition supplies `work_item_id` with activity `work` or `update` and cannot combine that scope with file or resource ownership. Work-item release requires disposition `done`, `blocked`, or `handoff`; only `blocked` may include a bounded `blocker_reference`. Resource acquisition or extension supplies one resource plus `resource_class`, `resource_id`, `expected_duration_seconds`, and `requested_hard_stop_duration_seconds`. The project deadline policy controls the accepted maximum and cleanup grace. Reports include a schema-version-one `work_items` section with deterministic activity segments and diagnostics.
 
-The first mutating operation migrates only an empty legacy Git-common-directory registry and preserves usable history. Canonical `state.json` contains `schema_version`, `state_layout_version: 2`, `migration_status`, and `origin`. Successful legacy migration leaves a registry directory with child `state.json` and a regular event marker file using the exact command-helper payloads. A live legacy registry permits exact release only. Contradictory dual state, incomplete migration, or replaced legacy markers return `CLAIM_STATE_MIGRATION_BLOCKED` without mutation or helper fallback.
+The first mutating operation migrates only an empty registry from the rejected primary-worktree `.codex/agent-claim` root and preserves usable history. Canonical `state.json` contains `schema_version`, `state_layout_version: 2`, `migration_status`, and `origin`. Successful migration leaves incompatible markers at the rejected paths. A live legacy registry permits exact release only. Contradictory dual state or incomplete migration returns `CLAIM_STATE_MIGRATION_BLOCKED` without mutation or helper fallback. A complete canonical marker makes later operations independent of `.git` and `.codex` access.
 
 Repository and worktree paths must be absolute and resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`.
 
