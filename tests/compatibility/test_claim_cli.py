@@ -377,8 +377,8 @@ class AgentClaimTests(unittest.TestCase):
             },
             json.loads(self.state_marker_path().read_text(encoding="utf-8")),
         )
-        self.assertFalse(self.legacy_registry_path().exists())
-        self.assertFalse(self.legacy_event_root().exists())
+        self.assert_legacy_registry_marker()
+        self.assertTrue(self.legacy_event_root().is_file())
 
     def test_empty_legacy_state_migrates_to_exact_cross_implementation_markers(self) -> None:
         self.legacy_registry_path().write_text('{"claims": []}\n', encoding="utf-8")

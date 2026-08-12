@@ -351,6 +351,7 @@ def _install_legacy_registry_marker(path: Path) -> None:
             f"Legacy registry path has an unexpected type or content: {path}",
             legacy_registry=str(path),
         )
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.mkdir()
     (path / STATE_MARKER_FILE_NAME).write_bytes(_legacy_marker_payload("registry"))
 
@@ -728,6 +729,8 @@ def _resolve_registry_path_once(
                 )
             return registry_path
         _registry_payload(registry_path, locked_file=registry_file)
+        _install_legacy_registry_marker(legacy_registry)
+        _install_legacy_events_marker(legacy_events)
         _write_state_marker(repository, "complete", "fresh")
     return registry_path
 
