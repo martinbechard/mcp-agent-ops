@@ -172,9 +172,10 @@ if result.next_task is not None:
 
 The MCP server publishes the same three names: `render_hierarchy_html`,
 `create_hierarchy_plan`, and `update_hierarchy_plan`. MCP file and folder paths must be absolute
-and resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`. Creation returns the resolved JSON plan path.
-Update returns structured success, that same path, any automatically completed ancestors, and the
-next incomplete executable leaf with its parent context.
+and resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS` or Codex's conventional
+`~/.codex/visualizations` subtree. Creation returns the resolved JSON plan path. Update returns
+structured success, that same path, any automatically completed ancestors, and the next incomplete
+executable leaf with its parent context.
 
 See the [complete hierarchical HTML renderer reference](docs/reference/hierarchy-html-renderer.md)
 for rendering, durable plan creation, exact item targeting, mutations, numbering, read-only browser
@@ -203,6 +204,10 @@ The server uses stdio by default. Configure these boundaries before exposing it 
 - `MCP_AGENT_OPS_REFERENCE_ROOTS` contains ordered readable user folders, separated by the operating system path separator. Every UTF-8 file beneath a configured folder is available by relative path.
 - `MCP_AGENT_OPS_DETECTION_REGISTRY` identifies the trusted methodology-owned technology registry.
 - `MCP_AGENT_OPS_WORKSPACE_ROOTS` contains allowed project and worktree roots, separated by the operating system path separator.
+
+Hierarchy source, theme, output, and plan paths additionally accept Codex's conventional
+`~/.codex/visualizations` subtree. This hierarchy-only default does not authorize repository,
+claim, verification, skill, or reference operations in that location.
 
 When the server starts with its working directory beneath a configured workspace root, it automatically overlays recursively discovered skills from `<cwd>/.agents/skills` and `<cwd>/.codex/skills` ahead of the configured user roots. The `.agents` project root has precedence over the `.codex` project root. Nested project skill directories are supported; duplicate skill names inside either one project root are rejected as ambiguous. `skill_refresh` rescans both project and configured roots.
 

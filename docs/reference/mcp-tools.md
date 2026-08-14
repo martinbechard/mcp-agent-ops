@@ -96,9 +96,10 @@ identify the work, while its outermost-first `parents` list provides context for
 
 Inline mappings, sequences, JSON, and YAML require no filesystem path. A model-supplied source
 path, custom theme folder, output folder, or plan path must be absolute and resolve beneath
-`MCP_AGENT_OPS_WORKSPACE_ROOTS`. A write call without `output_folder` uses the authorized server
-project directory. Render returns complete HTML when it does not write a file. Every file-writing
-result is the resolved output or JSON plan path.
+`MCP_AGENT_OPS_WORKSPACE_ROOTS` or the conventional Codex `~/.codex/visualizations` subtree. That
+additional root applies only to hierarchy operations. A write call without `output_folder` uses the
+authorized server project directory. Render returns complete HTML when it does not write a file.
+Every file-writing result is the resolved output or JSON plan path.
 
 ## Reference Data
 

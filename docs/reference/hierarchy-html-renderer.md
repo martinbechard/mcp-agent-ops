@@ -60,8 +60,9 @@ The MCP server publishes the three hierarchy functions under their Python names.
 
 MCP calls can supply an inline mapping, sequence, JSON string, or YAML string as `source`. A source
 file path, custom `themes_folder`, `output_folder`, or `plan_path` must be absolute. Each path must
-resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`. If a write call omits `output_folder`, the server
-uses its authorized project directory.
+resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS` or the conventional Codex
+`~/.codex/visualizations` subtree. The Codex location is authorized only for hierarchy operations.
+If a write call omits `output_folder`, the server uses its authorized project directory.
 
 The following arguments create a durable plan:
 

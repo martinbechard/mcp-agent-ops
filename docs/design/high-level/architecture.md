@@ -22,7 +22,9 @@ No domain module depends on FastMCP. Adapters translate typed requests to domain
 The `hierarchy` package is a framework-independent Python API. The FastMCP adapter exposes the same
 render, create, and update operations as MCP tools. The adapter translates JSON-safe inputs and
 resolves every model-supplied source, theme, output, and plan path beneath configured workspace
-roots. The renderer accepts in-memory data or an explicitly selected JSON/YAML file. It reads
+roots or the conventional Codex `~/.codex/visualizations` subtree. This additional hierarchy-only
+root does not authorize repository, claim, verification, skill, or reference access. The renderer
+accepts in-memory data or an explicitly selected JSON/YAML file. It reads
 packaged or caller-selected CSS and can write one HTML document. Source values are validated and
 HTML-escaped before rendering. Theme names and output filenames are base names, so path authority
 remains with the explicit source, themes-folder, and output-folder parameters.
@@ -89,7 +91,9 @@ workspace. The project reference roots prevent unrelated working-project files f
 model-readable. Every reference candidate must resolve beneath its selected folder and must be a
 regular UTF-8 file. Model-supplied repository, project, verification, validation, worktree,
 hierarchy source, theme, output, and plan paths are resolved only beneath their boundaries after
-symlink resolution. Skill validation and technology detection repeat containment at each nested
+symlink resolution. Hierarchy paths additionally accept the conventional Codex
+`~/.codex/visualizations` subtree without widening any repository-oriented boundary. Skill
+validation and technology detection repeat containment at each nested
 read boundary. Routine model-facing reference, catalog, validation, and detection results omit
 configured host paths; catalog-construction failures expose the exact administrator-owned paths
 needed to repair invalid configuration, and `skill_find` intentionally returns one selected manifest

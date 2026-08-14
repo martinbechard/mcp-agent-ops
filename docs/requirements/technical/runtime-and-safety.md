@@ -9,7 +9,9 @@
 - Resolve dotted hierarchy targets by complete one-based path components, never by text-prefix matching.
 - Require administrator-configured workspace and skill roots before resolving model-supplied paths.
 - Require model-supplied workspace and skill paths to be absolute and contained after symlink resolution.
-- Resolve every hierarchy MCP file or folder path beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS` before domain access or mutation.
+- Resolve every hierarchy MCP file or folder path beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS` or the
+  conventional Codex `~/.codex/visualizations` subtree before domain access or mutation, without
+  adding that subtree to repository-oriented boundaries.
 - Reauthorize a durable plan's stored custom-theme folder before each MCP mutation.
 - Recheck every nested skill manifest, adapter metadata file, technology source, owner manifest, owner-evidence file, and resource at its read boundary.
 - Publish project references only beneath conventional agent and skill folders when the working project is authorized.

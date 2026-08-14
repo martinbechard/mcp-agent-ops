@@ -551,7 +551,7 @@ async def test_server_exposes_workspace_safe_hierarchy_tools(tmp_path: Path) -> 
         plan_payload = json.loads(plan_path.read_text(encoding="utf-8"))
         plan_payload["themesFolder"] = str(outside)
         plan_path.write_text(json.dumps(plan_payload), encoding="utf-8")
-        with pytest.raises(ToolError, match="outside configured workspace roots"):
+        with pytest.raises(ToolError, match="outside configured hierarchy roots"):
             await client.call_tool(
                 "update_hierarchy_plan",
                 {
@@ -599,8 +599,53 @@ async def test_server_exposes_workspace_safe_hierarchy_tools(tmp_path: Path) -> 
                 },
             ),
         ):
-            with pytest.raises(ToolError, match="outside configured workspace roots"):
+            with pytest.raises(ToolError, match="outside configured hierarchy roots"):
                 await client.call_tool(tool_name, arguments)
+
+
+async def test_hierarchy_plans_accept_codex_visualization_folder_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Authorize Codex visualizations for hierarchy tools without widening workspaces."""
+    workspace = tmp_path / "workspace"
+    visualization = tmp_path / ".codex" / "visualizations" / "2026" / "08" / "14" / "task"
+    workspace.mkdir()
+    visualization.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    server = create_server(
+        skill_roots=[],
+        workspace_roots=[workspace],
+        project_root=workspace,
+    )
+
+    async with Client(server) as client:
+        created = await client.call_tool(
+            "create_hierarchy_plan",
+            {
+                "source": {"Plan": ["Prepare"]},
+                "output_filename": "plan.html",
+                "output_folder": str(visualization),
+            },
+        )
+        plan_path = visualization / "plan.json"
+        assert created.structured_content["result"] == str(plan_path)
+
+        updated = await client.call_tool(
+            "update_hierarchy_plan",
+            {
+                "plan_path": str(plan_path),
+                "target": "1",
+                "completed": True,
+            },
+        )
+        assert updated.structured_content["success"] is True
+
+        with pytest.raises(ToolError, match="outside configured workspace roots"):
+            await client.call_tool(
+                "verify_yaml",
+                {"repository_root": str(visualization), "paths": ["plan.json"]},
+            )
 
 
 async def test_shared_audit_records_bounded_hierarchy_outcomes(tmp_path: Path) -> None:
