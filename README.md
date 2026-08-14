@@ -5,7 +5,7 @@
 The service owns six capability groups:
 
 - repository claims, worktree isolation, event journaling, archival, and contention reporting;
-- reusable YAML and Markdown verification operations;
+- reusable YAML and checkpoint-scoped Markdown verification operations;
 - recursive reference-data aggregation across authorized project and user folders;
 - snapshot-based discovery and extension-aware batched loading of installed Agent Skills;
 - Agent Skill validation; and
@@ -230,6 +230,32 @@ resolve independently, so either one can come from a project or configured user 
 When the working directory is beneath an allowed workspace, the server recursively publishes files beneath `<cwd>/.agents` and `<cwd>/.codex/skills` before files beneath the configured user reference folders. The server aggregates every matching relative path in search order with one newline between sources. Traversal and symlinks that resolve outside their selected folder are not published. `reference_refresh` rescans all reference folders.
 
 Repository, project, verification, worktree, and validation paths supplied through tools must be absolute and resolve beneath their configured boundary. Name-based skill validation uses the same catalog lookup as skill loading. Explicit skill-validation paths may also target unpublished skills anywhere beneath the authorized working project, without adding those paths to catalog discovery. Catalog discovery, skill validation, and technology detection recheck every nested manifest, metadata file, source file, and supporting resource before reading it. The server rejects missing boundary configuration, traversal, and symlink escape rather than granting ambient filesystem access.
+
+### Verify Markdown changed by one operation
+
+Use a repository checkpoint to verify only the Markdown files changed by one bounded operation:
+
+```text
+capture_repository_state(repository_root)
+perform the bounded operation
+verify_markdown_links(
+  repository_root,
+  scope="changed_since_checkpoint",
+  checkpoint_id="..."
+)
+```
+
+The server derives added, modified, renamed, and deleted paths. It also checks current Markdown
+files that refer to deleted or renamed targets. Changes present before checkpoint capture are not
+selected. Checkpoints remain in one MCP server process and expire when that process exits.
+
+Use `scope="git_changed"` when verification must include all current staged, unstaged, renamed,
+deleted, and untracked changes. Use the default `patterns` scope for explicit paths or globs. See
+[`docs/reference/mcp-tools.md`](docs/reference/mcp-tools.md#verification) for result fields, missing
+path behavior, unmatched-glob behavior, and rename limitations.
+
+Checkpoint capture and verification are read-only. They do not change repository files,
+permissions, `HEAD`, or the Git index.
 
 The reference and skill catalogs are built lazily and reused for the life of the server process. `reference_refresh` and `skill_refresh` atomically publish new snapshots after source files change. Technology registry configuration is also cached and takes effect after restarting the server. Claim state remains disk-authoritative and coordinates across server processes.
 

@@ -18,8 +18,21 @@
 
 - The service validates YAML syntax while detecting duplicate mapping keys.
 - The service verifies local Markdown links without following remote URLs.
-- Results identify every checked file and return structured diagnostics suitable for agent decisions.
-- Verification never mutates the inspected repository.
+- A caller can capture an opaque repository checkpoint before one bounded operation. The checkpoint
+  is valid only for the same worktree and MCP server process.
+- Markdown verification can select explicit paths and globs, all current Git changes, or only
+  changes made after a checkpoint.
+- Checkpoint-scoped selection excludes staged, unstaged, and untracked changes that existed before
+  checkpoint capture. Git-changed selection includes all current checkout changes.
+- Changed-file results classify added, modified, renamed, and deleted paths. Verification checks
+  current Markdown sources and inbound Markdown references to deleted or renamed targets.
+- A missing exact source path produces a structured `requested_path_missing` finding. An unmatched
+  glob appears in `unmatched_patterns`.
+- A successful empty changed-file selection is distinct from a missing path or unmatched glob.
+- Results identify selected and checked files and return structured diagnostics suitable for agent
+  decisions.
+- Checkpoint capture and verification never mutate repository files, permissions, `HEAD`, or the
+  Git index.
 
 ## Reference Data
 
