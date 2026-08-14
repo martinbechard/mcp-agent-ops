@@ -29,6 +29,12 @@ packaged or caller-selected CSS and can write one HTML document. Source values a
 HTML-escaped before rendering. Theme names and output filenames are base names, so path authority
 remains with the explicit source, themes-folder, and output-folder parameters.
 
+The MCP adapter never infers hierarchy output ownership from its process working directory. An
+explicit output folder takes precedence over the optional configured hierarchy output folder. If
+neither exists, the adapter returns HTML or canonical plan JSON inline and performs no output
+mutation. This policy keeps caller context in the adapter while plan normalization remains in the
+framework-independent hierarchy domain.
+
 Durable plan creation normalizes hierarchy input into a same-named JSON source and HTML rendering.
 The JSON file stores ordered item text, completion state, children, and presentation parameters.
 Mutation resolves one item by an exact dotted path or an exact unique title, applies one requested

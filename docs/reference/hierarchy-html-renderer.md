@@ -54,15 +54,17 @@ The MCP server publishes the three hierarchy functions under their Python names.
 
 | Tool | Required arguments | Result |
 |---|---|---|
-| `render_hierarchy_html` | `source` | Complete HTML, or the resolved HTML path when `output_filename` is supplied. |
-| `create_hierarchy_plan` | `source`, `output_filename` | Resolved JSON plan path. |
+| `render_hierarchy_html` | `source` | Complete HTML, or the resolved HTML path when a destination is available. |
+| `create_hierarchy_plan` | `source`, `output_filename` | Canonical JSON, or its resolved path when a destination is available. |
 | `update_hierarchy_plan` | `plan_path`, `target`, and exactly one mutation argument | Structured success, plan path, completed ancestors, and next executable task. |
 
 MCP calls can supply an inline mapping, sequence, JSON string, or YAML string as `source`. A source
 file path, custom `themes_folder`, `output_folder`, or `plan_path` must be absolute. Each path must
 resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS` or the conventional Codex
 `~/.codex/visualizations` subtree. The Codex location is authorized only for hierarchy operations.
-If a write call omits `output_folder`, the server uses its authorized project directory.
+If a write call omits `output_folder`, the server uses `MCP_AGENT_OPS_HIERARCHY_OUTPUT_FOLDER` when
+configured. Without either destination, rendering returns inline HTML and plan creation returns
+canonical JSON without writing files.
 
 The following arguments create a durable plan:
 

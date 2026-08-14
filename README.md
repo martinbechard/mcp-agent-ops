@@ -173,9 +173,10 @@ if result.next_task is not None:
 The MCP server publishes the same three names: `render_hierarchy_html`,
 `create_hierarchy_plan`, and `update_hierarchy_plan`. MCP file and folder paths must be absolute
 and resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS` or Codex's conventional
-`~/.codex/visualizations` subtree. Creation returns the resolved JSON plan path. Update returns
-structured success, that same path, any automatically completed ancestors, and the next incomplete
-executable leaf with its parent context.
+`~/.codex/visualizations` subtree. Creation returns canonical JSON unless an explicit or configured
+destination is available, in which case it returns the resolved JSON plan path. Update returns
+structured success, that persisted path, any automatically completed ancestors, and the next
+incomplete executable leaf with its parent context.
 
 See the [complete hierarchical HTML renderer reference](docs/reference/hierarchy-html-renderer.md)
 for rendering, durable plan creation, exact item targeting, mutations, numbering, read-only browser
@@ -204,10 +205,14 @@ The server uses stdio by default. Configure these boundaries before exposing it 
 - `MCP_AGENT_OPS_REFERENCE_ROOTS` contains ordered readable user folders, separated by the operating system path separator. Every UTF-8 file beneath a configured folder is available by relative path.
 - `MCP_AGENT_OPS_DETECTION_REGISTRY` identifies the trusted methodology-owned technology registry.
 - `MCP_AGENT_OPS_WORKSPACE_ROOTS` contains allowed project and worktree roots, separated by the operating system path separator.
+- `MCP_AGENT_OPS_HIERARCHY_OUTPUT_FOLDER` optionally selects the default authorized destination
+  for hierarchy HTML and JSON files when a tool call omits `output_folder`.
 
 Hierarchy source, theme, output, and plan paths additionally accept Codex's conventional
 `~/.codex/visualizations` subtree. This hierarchy-only default does not authorize repository,
-claim, verification, skill, or reference operations in that location.
+claim, verification, skill, or reference operations in that location. If neither an explicit
+`output_folder` nor `MCP_AGENT_OPS_HIERARCHY_OUTPUT_FOLDER` is available, render calls return HTML
+and plan-creation calls return canonical JSON without creating files.
 
 When the server starts with its working directory beneath a configured workspace root, it automatically overlays recursively discovered skills from `<cwd>/.agents/skills` and `<cwd>/.codex/skills` ahead of the configured user roots. The `.agents` project root has precedence over the `.codex` project root. Nested project skill directories are supported; duplicate skill names inside either one project root are rejected as ambiguous. `skill_refresh` rescans both project and configured roots.
 
@@ -244,7 +249,8 @@ Use the absolute executable directory reported by `uv tool dir --bin`. Replace `
         "MCP_AGENT_OPS_SKILL_ROOTS": "/Users/YOUR_NAME/.agents/skills:/Users/YOUR_NAME/.codex/skills",
         "MCP_AGENT_OPS_REFERENCE_ROOTS": "/Users/YOUR_NAME/.agents:/Users/YOUR_NAME/.codex/skills",
         "MCP_AGENT_OPS_DETECTION_REGISTRY": "/Users/YOUR_NAME/.agents/skills/detect-technology-skills/references/technology-skill-detection-registry.yaml",
-        "MCP_AGENT_OPS_WORKSPACE_ROOTS": "/Users/YOUR_NAME/dev"
+        "MCP_AGENT_OPS_WORKSPACE_ROOTS": "/Users/YOUR_NAME/dev",
+        "MCP_AGENT_OPS_HIERARCHY_OUTPUT_FOLDER": "/Users/YOUR_NAME/.codex/visualizations"
       }
     }
   }
@@ -269,7 +275,8 @@ Use the absolute executable directory reported by `uv tool dir --bin`. Replace t
         "MCP_AGENT_OPS_SKILL_ROOTS": "C:\\Users\\YOUR_NAME\\.agents\\skills;C:\\Users\\YOUR_NAME\\.codex\\skills",
         "MCP_AGENT_OPS_REFERENCE_ROOTS": "C:\\Users\\YOUR_NAME\\.agents;C:\\Users\\YOUR_NAME\\.codex\\skills",
         "MCP_AGENT_OPS_DETECTION_REGISTRY": "C:\\Users\\YOUR_NAME\\.agents\\skills\\detect-technology-skills\\references\\technology-skill-detection-registry.yaml",
-        "MCP_AGENT_OPS_WORKSPACE_ROOTS": "C:\\Users\\YOUR_NAME\\dev"
+        "MCP_AGENT_OPS_WORKSPACE_ROOTS": "C:\\Users\\YOUR_NAME\\dev",
+        "MCP_AGENT_OPS_HIERARCHY_OUTPUT_FOLDER": "C:\\Users\\YOUR_NAME\\.codex\\visualizations"
       }
     }
   }

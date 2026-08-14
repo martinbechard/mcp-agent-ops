@@ -17,7 +17,8 @@
   copy-safe text spacing, complete payload copying, compact accessible SVG action controls,
   level-first control order, plus/minus global controls, progressive level visibility, dotted
   one-based numbering, transparent singleton roots, exact completed-item paths, optional read-only
-  completion markers, durable plan creation, JSON source-path returns, unique-title and exact-path
+  completion markers, inline no-write and configured durable plan creation, JSON content or
+  source-path returns, unique-title and exact-path
   targeting, completion and text updates, branch-subtree completion, upward completion cascading,
   ancestor reopening after completion and structural mutation, depth-first next-leaf selection
   with parent context, child replacement and insertion, peer insertion, regeneration, packaged

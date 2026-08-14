@@ -56,8 +56,10 @@
 ## Hierarchical Plans
 
 - The Python API and `render_hierarchy_html` MCP tool render supported hierarchy input as self-contained themed HTML.
-- The MCP server exposes durable plan creation and mutation through `create_hierarchy_plan` and `update_hierarchy_plan`.
-- Durable plan creation writes a same-named JSON source and HTML report, then returns the JSON path.
+- The MCP server exposes inline or durable plan creation through `create_hierarchy_plan` and durable mutation through `update_hierarchy_plan`.
+- Plan creation writes a same-named JSON source and HTML report and returns the JSON path only when
+  an explicit or configured output folder exists; otherwise it returns canonical JSON without
+  filesystem mutation.
 - Plan mutation targets one item by an exact dotted path or exact unique title.
 - One mutation call can change completion, replace text, add a child, replace all children, or add a peer after the target.
 - Branch completion is derived from child completion. Completing or reopening a branch applies to its descendants, and structural mutations recompute affected ancestors.

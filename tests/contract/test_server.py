@@ -482,6 +482,7 @@ async def test_server_exposes_workspace_safe_hierarchy_tools(tmp_path: Path) -> 
             {
                 "source": str(workspace_source),
                 "output_filename": "outline.html",
+                "output_folder": str(workspace),
             },
         )
         assert saved.structured_content["result"] == str(
@@ -494,6 +495,7 @@ async def test_server_exposes_workspace_safe_hierarchy_tools(tmp_path: Path) -> 
                 "source": {"Delivery plan": ["Prepare", "Release"]},
                 "title": "Delivery plan",
                 "output_filename": "delivery-plan.html",
+                "output_folder": str(workspace),
                 "completed_items": ["1"],
             },
         )
@@ -603,6 +605,133 @@ async def test_server_exposes_workspace_safe_hierarchy_tools(tmp_path: Path) -> 
                 await client.call_tool(tool_name, arguments)
 
 
+async def test_hierarchy_returns_inline_content_without_an_output_destination(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep omitted hierarchy outputs off disk when no default folder is configured."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.delenv("MCP_AGENT_OPS_HIERARCHY_OUTPUT_FOLDER", raising=False)
+    server = create_server(
+        skill_roots=[],
+        workspace_roots=[workspace],
+        project_root=workspace,
+    )
+
+    async with Client(server) as client:
+        rendered = await client.call_tool(
+            "render_hierarchy_html",
+            {
+                "source": {"Outline": ["Purpose"]},
+                "output_filename": "inline-outline.html",
+            },
+        )
+        assert rendered.structured_content["result"].startswith("<!doctype html>")
+
+        created = await client.call_tool(
+            "create_hierarchy_plan",
+            {
+                "source": {"Plan": ["Prepare"]},
+                "output_filename": "inline-plan.html",
+            },
+        )
+        payload = json.loads(created.structured_content["result"])
+        assert payload["schema"] == "mcp-agent-ops-hierarchy-plan"
+        assert payload["htmlFilename"] == "inline-plan.html"
+
+        with pytest.raises(ToolError, match=r"Theme.*file does not exist"):
+            await client.call_tool(
+                "create_hierarchy_plan",
+                {
+                    "source": {"Plan": ["Prepare"]},
+                    "theme": "missing",
+                    "themes_folder": str(workspace / "themes"),
+                    "output_filename": "invalid-theme-plan.html",
+                },
+            )
+
+    assert not (workspace / "inline-outline.html").exists()
+    assert not (workspace / "inline-plan.html").exists()
+    assert not (workspace / "inline-plan.json").exists()
+    assert not (workspace / "invalid-theme-plan.html").exists()
+    assert not (workspace / "invalid-theme-plan.json").exists()
+
+
+async def test_hierarchy_uses_configured_default_output_folder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persist omitted hierarchy outputs beneath the configured authorized default."""
+    workspace = tmp_path / "workspace"
+    output = workspace / "visualizations"
+    explicit_output = workspace / "explicit"
+    workspace.mkdir()
+    monkeypatch.setenv("MCP_AGENT_OPS_HIERARCHY_OUTPUT_FOLDER", str(output))
+    server = create_server(
+        skill_roots=[],
+        workspace_roots=[workspace],
+        project_root=workspace,
+    )
+
+    async with Client(server) as client:
+        rendered = await client.call_tool(
+            "render_hierarchy_html",
+            {
+                "source": {"Outline": ["Purpose"]},
+                "output_filename": "outline.html",
+            },
+        )
+        assert rendered.structured_content["result"] == str(output / "outline.html")
+
+        created = await client.call_tool(
+            "create_hierarchy_plan",
+            {
+                "source": {"Plan": ["Prepare"]},
+                "output_filename": "plan.html",
+            },
+        )
+        assert created.structured_content["result"] == str(output / "plan.json")
+
+        explicit = await client.call_tool(
+            "create_hierarchy_plan",
+            {
+                "source": {"Explicit plan": ["Prepare"]},
+                "output_filename": "explicit-plan.html",
+                "output_folder": str(explicit_output),
+            },
+        )
+        assert explicit.structured_content["result"] == str(
+            explicit_output / "explicit-plan.json"
+        )
+
+    assert (output / "outline.html").is_file()
+    assert (output / "plan.html").is_file()
+    assert (output / "plan.json").is_file()
+    assert (explicit_output / "explicit-plan.html").is_file()
+    assert (explicit_output / "explicit-plan.json").is_file()
+
+
+def test_hierarchy_default_output_must_be_inside_hierarchy_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject a configured hierarchy destination outside every authorized root."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv(
+        "MCP_AGENT_OPS_HIERARCHY_OUTPUT_FOLDER",
+        str(tmp_path / "outside"),
+    )
+
+    with pytest.raises(ValueError, match="outside configured hierarchy roots"):
+        create_server(
+            skill_roots=[],
+            workspace_roots=[workspace],
+            project_root=workspace,
+        )
+
+
 async def test_hierarchy_plans_accept_codex_visualization_folder_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -675,6 +804,7 @@ async def test_shared_audit_records_bounded_hierarchy_outcomes(tmp_path: Path) -
             {
                 "source": {"Plan": ["Private task"]},
                 "output_filename": "private-plan.html",
+                "output_folder": str(workspace),
             },
         )
         await client.call_tool(

@@ -38,6 +38,7 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
     )
     environment["MCP_AGENT_OPS_REFERENCE_ROOTS"] = str(reference_root)
     environment["MCP_AGENT_OPS_WORKSPACE_ROOTS"] = str(tmp_path)
+    environment["MCP_AGENT_OPS_HIERARCHY_OUTPUT_FOLDER"] = str(tmp_path)
     environment["MCP_AGENT_OPS_AUDIT_LOG"] = str(tmp_path / "mcp-audit.jsonl")
     environment["MCP_AGENT_OPS_AUDIT_ROOTS"] = str(tmp_path)
     transport = StdioTransport(
@@ -91,7 +92,6 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
             {
                 "source": {"Delivery plan": ["Prepare", "Release"]},
                 "output_filename": "stdio-plan.html",
-                "output_folder": str(tmp_path),
             },
         )
         plan_path = (tmp_path / "stdio-plan.json").resolve()

@@ -29,6 +29,7 @@ from mcp_agent_ops.hierarchy import (
 from mcp_agent_ops.hierarchy import (
     update_hierarchy_plan as update_hierarchy_plan_domain,
 )
+from mcp_agent_ops.hierarchy.plan import hierarchy_plan_json
 from mcp_agent_ops.reference_data.catalog import ReferenceCatalog
 from mcp_agent_ops.reference_data.models import (
     PublishedReferenceCatalog,
@@ -232,6 +233,12 @@ def configured_workspace_roots() -> list[Path]:
     return [Path(value).expanduser() for value in raw.split(os.pathsep) if value]
 
 
+def configured_hierarchy_output_folder() -> Path | None:
+    """Return the optional default folder for hierarchy files created through MCP."""
+    value = os.environ.get("MCP_AGENT_OPS_HIERARCHY_OUTPUT_FOLDER")
+    return Path(value).expanduser() if value else None
+
+
 def _hierarchy_roots(workspace_roots: Sequence[Path]) -> list[Path]:
     """Extend hierarchy-only access to Codex's conventional visualization folder."""
     return [*workspace_roots, Path.home() / ".codex" / "visualizations"]
@@ -329,6 +336,7 @@ def create_server(
     audit_session_id: str | None = None,
     project_root: Path | None = None,
     reference_roots: Sequence[Path] | None = None,
+    hierarchy_output_folder: Path | None = None,
 ) -> FastMCP:
     """Create the MCP agent-operations server with immutable read snapshots.
 
@@ -349,6 +357,8 @@ def create_server(
             ignored unless it is inside a configured workspace.
         reference_roots: Optional ordered user reference folders used instead of environment
             configuration. Every contained UTF-8 file is available by relative path.
+        hierarchy_output_folder: Optional default hierarchy destination used instead of
+            `MCP_AGENT_OPS_HIERARCHY_OUTPUT_FOLDER` when a call omits `output_folder`.
 
     Returns:
         A FastMCP server ready for in-memory testing or stdio execution.
@@ -372,6 +382,20 @@ def create_server(
         else configured_workspace_roots()
     )
     hierarchy_roots = _hierarchy_roots(workspaces)
+    configured_hierarchy_output = (
+        hierarchy_output_folder
+        if hierarchy_output_folder is not None
+        else configured_hierarchy_output_folder()
+    )
+    default_hierarchy_output = (
+        None
+        if configured_hierarchy_output is None
+        else resolve_within_roots(
+            hierarchy_roots,
+            str(configured_hierarchy_output),
+            "hierarchy",
+        )
+    )
     active_project_root = (project_root or Path.cwd()).expanduser().resolve()
     project_roots = _project_skill_roots(active_project_root, workspaces)
     project_reference_roots = _project_reference_roots(active_project_root, workspaces)
@@ -489,13 +513,11 @@ def create_server(
             )
         return value
 
-    def hierarchy_output_folder(value: str | None, *, required: bool) -> Path | None:
-        """Resolve an explicit output folder or the server project when a write is required."""
+    def resolve_hierarchy_output_folder(value: str | None) -> Path | None:
+        """Resolve an explicit output folder or the configured hierarchy default."""
         if value is not None:
             return hierarchy_path(value)
-        if required:
-            return hierarchy_path(str(active_project_root))
-        return None
+        return default_hierarchy_output
 
     def hierarchy_plan_path(value: str) -> Path:
         """Authorize a plan and any valid stored custom-theme path before domain access."""
@@ -771,8 +793,8 @@ def create_server(
 
         Inline mappings, sequences, JSON, and YAML require no filesystem access. An
         explicit source path, custom theme folder, or output folder must be absolute and
-        resolve beneath the hierarchy roots. When a filename is supplied without an output
-        folder, the authorized server project directory is used.
+        resolve beneath the hierarchy roots. A filename without an explicit or configured
+        output folder returns inline HTML without writing a file.
 
         Args:
             source: Inline mapping, sequence, JSON, YAML, or an absolute JSON/YAML path.
@@ -786,8 +808,8 @@ def create_server(
             output_folder: Optional absolute destination beneath an authorized hierarchy root.
 
         Returns:
-            Complete HTML when `output_filename` is absent, otherwise the resolved saved
-            HTML path.
+            Resolved saved HTML path when a filename and destination are available;
+            otherwise complete inline HTML.
 
         Raises:
             ValueError: If a path escapes the hierarchy roots, inputs conflict, or rendering fails.
@@ -795,9 +817,9 @@ def create_server(
         Side effects:
             Reads an authorized source or custom theme and writes one HTML file when selected.
         """
-        resolved_output_folder = hierarchy_output_folder(
-            output_folder,
-            required=output_filename is not None,
+        resolved_output_folder = resolve_hierarchy_output_folder(output_folder)
+        saved_output_filename = (
+            output_filename if resolved_output_folder is not None else None
         )
         result = render_hierarchy_html_domain(
             hierarchy_source(source),
@@ -809,8 +831,12 @@ def create_server(
             numbering=numbering,
             checkboxes=checkboxes,
             completed_items=completed_items or [],
-            output_filename=output_filename,
-            output_folder=resolved_output_folder,
+            output_filename=saved_output_filename,
+            output_folder=(
+                resolved_output_folder
+                if output_filename is not None or output_folder is not None
+                else None
+            ),
         )
         return str(result)
 
@@ -824,10 +850,11 @@ def create_server(
         output_folder: str | None = None,
         completed_items: list[str] | None = None,
     ) -> str:
-        """Create a durable hierarchy JSON plan and its same-named HTML rendering.
+        """Create a hierarchy plan as durable files or canonical inline JSON.
 
         Source, theme, and output paths must be absolute beneath the hierarchy roots. The
-        output folder defaults to the authorized server project directory.
+        output folder defaults to `MCP_AGENT_OPS_HIERARCHY_OUTPUT_FOLDER`. When neither
+        destination is supplied, the tool returns JSON without writing files.
 
         Args:
             source: Inline mapping, sequence, JSON, YAML, or an absolute JSON/YAML path.
@@ -836,26 +863,39 @@ def create_server(
             theme: Packaged or custom theme base name without `.css`.
             themes_folder: Absolute folder for a custom theme, or null for packaged themes.
             output_folder: Optional absolute destination beneath an authorized hierarchy root.
+                Overrides the configured default folder.
             completed_items: Exact dotted paths or unique titles initially marked complete.
 
         Returns:
-            Resolved JSON plan path for later `update_hierarchy_plan` calls.
+            Resolved JSON plan path after persistence, otherwise canonical plan JSON.
 
         Raises:
             ValueError: If a path escapes the hierarchy roots or plan creation fails.
 
         Side effects:
-            Reads an authorized source or theme and writes one JSON file plus one HTML file.
+            Reads an authorized source or theme. Writes one JSON file plus one HTML file
+            only when an explicit or configured output folder is available.
         """
+        resolved_output_folder = resolve_hierarchy_output_folder(output_folder)
+        resolved_themes_folder = (
+            hierarchy_path(themes_folder) if themes_folder is not None else None
+        )
+        if resolved_output_folder is None:
+            return hierarchy_plan_json(
+                hierarchy_source(source),
+                title=title,
+                theme=theme,
+                themes_folder=resolved_themes_folder,
+                output_filename=output_filename,
+                completed_items=completed_items or [],
+            )
         result = create_hierarchy_plan_domain(
             hierarchy_source(source),
             title=title,
             theme=theme,
-            themes_folder=(
-                hierarchy_path(themes_folder) if themes_folder is not None else None
-            ),
+            themes_folder=resolved_themes_folder,
             output_filename=output_filename,
-            output_folder=hierarchy_output_folder(output_folder, required=True),
+            output_folder=resolved_output_folder,
             completed_items=completed_items or [],
         )
         return str(result)

@@ -77,8 +77,8 @@ Hierarchy tools render inline or file-backed JSON/YAML data and maintain durable
 
 | Tool | Required arguments | Purpose |
 |---|---|---|
-| `render_hierarchy_html` | `source` | Return self-contained HTML or save it when `output_filename` is supplied. |
-| `create_hierarchy_plan` | `source`, `output_filename` | Write a same-named JSON plan and HTML report, then return the JSON path. |
+| `render_hierarchy_html` | `source` | Return self-contained HTML, or save it when a filename and output destination are available. |
+| `create_hierarchy_plan` | `source`, `output_filename` | Return canonical JSON, or write JSON and HTML and return the JSON path when a destination is available. |
 | `update_hierarchy_plan` | `plan_path`, `target`, exactly one mutation | Update one item, cascade completion through finished ancestors, regenerate both files, and return the next executable leaf. |
 
 `render_hierarchy_html` accepts optional `title`, `theme`, `themes_folder`, `numbering`,
@@ -98,8 +98,9 @@ Inline mappings, sequences, JSON, and YAML require no filesystem path. A model-s
 path, custom theme folder, output folder, or plan path must be absolute and resolve beneath
 `MCP_AGENT_OPS_WORKSPACE_ROOTS` or the conventional Codex `~/.codex/visualizations` subtree. That
 additional root applies only to hierarchy operations. A write call without `output_folder` uses the
-authorized server project directory. Render returns complete HTML when it does not write a file.
-Every file-writing result is the resolved output or JSON plan path.
+authorized `MCP_AGENT_OPS_HIERARCHY_OUTPUT_FOLDER` when configured. Without either destination,
+render returns complete HTML and plan creation returns canonical JSON without writing files. Every
+file-writing result is the resolved output or JSON plan path.
 
 ## Reference Data
 

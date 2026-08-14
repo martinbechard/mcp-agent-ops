@@ -18,6 +18,7 @@ from mcp_agent_ops.hierarchy.renderer import (
     _is_branch,
     _is_sequence,
     _load_hierarchy,
+    _theme_css,
     _value_text,
     render_hierarchy_html,
 )
@@ -303,8 +304,12 @@ def _render_plan(document: _PlanDocument) -> None:
 def _write_plan(document: _PlanDocument) -> None:
     if document.path.is_symlink():
         raise ValueError("Hierarchy plan file must not be a symbolic link.")
-    content = json.dumps(document.payload(), ensure_ascii=False, indent=2) + "\n"
-    document.path.write_text(content, encoding="utf-8")
+    document.path.write_text(_plan_json(document), encoding="utf-8")
+
+
+def _plan_json(document: _PlanDocument) -> str:
+    """Serialize one canonical hierarchy plan for persistence or an inline MCP result."""
+    return json.dumps(document.payload(), ensure_ascii=False, indent=2) + "\n"
 
 
 def _required_string(payload: dict[str, object], key: str) -> str:
@@ -312,6 +317,46 @@ def _required_string(payload: dict[str, object], key: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"Hierarchy plan field '{key}' must be a non-empty string.")
     return value
+
+
+def _plan_filename(output_filename: str | Path) -> Path:
+    """Validate and return one hierarchy-plan HTML base filename."""
+    filename = Path(output_filename)
+    if not filename.name or filename.name in {".", ".."} or filename.parent != Path("."):
+        raise ValueError("Hierarchy plan output_filename must be a base file name without a directory.")
+    if filename.suffix.lower() != ".html":
+        raise ValueError("Hierarchy plan output_filename must use a .html extension.")
+    return filename
+
+
+def _new_plan_document(
+    source: object,
+    *,
+    path: Path,
+    title: str,
+    theme: str,
+    themes_folder: str | Path | None,
+    html_filename: str,
+    completed_items: Sequence[str],
+) -> _PlanDocument:
+    """Normalize hierarchy input into one canonical plan document."""
+    hierarchy = _load_hierarchy(source)
+    root_label, items = _plan_root(hierarchy, title)
+    for target in completed_items:
+        _set_subtree_completion(_locate_item(items, target).item, True)
+    _recompute_branch_completion(items)
+    stored_themes_folder = (
+        None if themes_folder is None else str(Path(themes_folder).expanduser().resolve())
+    )
+    return _PlanDocument(
+        path=path,
+        title=title,
+        theme=theme,
+        themes_folder=stored_themes_folder,
+        html_filename=html_filename,
+        root_label=root_label,
+        items=items,
+    )
 
 
 def _load_plan(path: str | Path) -> _PlanDocument:
@@ -389,37 +434,72 @@ def create_hierarchy_plan(
         Reads selected source and theme files, creates the destination folder, and writes
         one JSON plan file plus one same-named HTML file.
     """
-    filename = Path(output_filename)
-    if not filename.name or filename.name in {".", ".."} or filename.parent != Path("."):
-        raise ValueError("Hierarchy plan output_filename must be a base file name without a directory.")
-    if filename.suffix.lower() != ".html":
-        raise ValueError("Hierarchy plan output_filename must use a .html extension.")
+    filename = _plan_filename(output_filename)
     folder = Path.cwd() if output_folder is None else Path(output_folder).expanduser()
     folder.mkdir(parents=True, exist_ok=True)
     plan_target = folder.resolve() / filename.with_suffix(".json").name
     if plan_target.is_symlink():
         raise ValueError("Hierarchy plan file must not be a symbolic link.")
     plan_path = plan_target.resolve()
-    hierarchy = _load_hierarchy(source)
-    root_label, items = _plan_root(hierarchy, title)
-    for target in completed_items:
-        _set_subtree_completion(_locate_item(items, target).item, True)
-    _recompute_branch_completion(items)
-    stored_themes_folder = (
-        None if themes_folder is None else str(Path(themes_folder).expanduser().resolve())
-    )
-    document = _PlanDocument(
+    document = _new_plan_document(
+        source,
         path=plan_path,
         title=title,
         theme=theme,
-        themes_folder=stored_themes_folder,
+        themes_folder=themes_folder,
         html_filename=filename.name,
-        root_label=root_label,
-        items=items,
+        completed_items=completed_items,
     )
     _render_plan(document)
     _write_plan(document)
     return plan_path
+
+
+def hierarchy_plan_json(
+    source: object,
+    *,
+    title: str = "Hierarchy plan",
+    theme: str = "default",
+    themes_folder: str | Path | None = None,
+    output_filename: str | Path,
+    completed_items: Sequence[str] = (),
+) -> str:
+    """Return canonical hierarchy-plan JSON without creating files.
+
+    This adapter-facing operation applies the same hierarchy normalization and initial
+    completion rules as durable plan creation. The retained HTML filename allows a caller
+    to persist the returned document later using the standard plan schema.
+
+    Args:
+        source: Any in-memory, JSON, YAML, or source-file hierarchy accepted by
+            `render_hierarchy_html`.
+        title: Plan title and default structural root label.
+        theme: Packaged or caller-owned theme base name retained in the plan.
+        themes_folder: Optional authorized folder retained for a caller-owned theme.
+        output_filename: Base HTML filename retained in the canonical plan document.
+        completed_items: Exact dotted paths or unique titles initially marked complete.
+
+    Returns:
+        Indented canonical JSON ending with one newline.
+
+    Raises:
+        FileNotFoundError: If a selected source file does not exist.
+        TypeError: If the hierarchy contains unsupported values.
+        ValueError: If hierarchy parsing, output naming, or initial targeting fails.
+
+    This function reads a selected source file but performs no filesystem mutation.
+    """
+    filename = _plan_filename(output_filename)
+    _theme_css(theme, themes_folder)
+    return _plan_json(_new_plan_document(
+        source,
+        path=Path(filename.with_suffix(".json").name),
+        title=title,
+        theme=theme,
+        themes_folder=themes_folder,
+        html_filename=filename.name,
+        completed_items=completed_items,
+    ))
 
 
 def update_hierarchy_plan(

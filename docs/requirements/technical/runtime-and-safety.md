@@ -13,6 +13,8 @@
   conventional Codex `~/.codex/visualizations` subtree before domain access or mutation, without
   adding that subtree to repository-oriented boundaries.
 - Reauthorize a durable plan's stored custom-theme folder before each MCP mutation.
+- Never infer an MCP hierarchy output folder from the server working directory; use the explicit
+  folder, then the authorized configured default, or return inline content without output mutation.
 - Recheck every nested skill manifest, adapter metadata file, technology source, owner manifest, owner-evidence file, and resource at its read boundary.
 - Publish project references only beneath conventional agent and skill folders when the working project is authorized.
 - Reject unsafe relative reference paths and omit non-files, non-UTF-8 content, and reference symlinks that escape their selected folder.
