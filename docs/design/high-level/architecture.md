@@ -109,7 +109,12 @@ agent work; it is not a general hostile-code sandbox.
 
 ## Transport
 
-The transport is stdio. Process memory is used only for immutable read snapshots; disk remains authoritative and separate server processes continue coordinating claim mutations through repository-global state. An HTTP transport can be added later without changing domain interfaces.
+The transport is stdio. Process memory holds immutable catalog snapshots and opaque repository
+checkpoints used only for later read comparisons. Checkpoints are bound to one resolved worktree and
+repository-global Git identity, are never stored inside the inspected repository, and expire with the
+server process. Disk remains authoritative and separate server processes continue coordinating claim
+mutations through repository-global state. An HTTP transport can be added later without changing
+domain interfaces.
 
 The non-starting identity command reports the package version plus a location-independent digest over installed runtime resources. Evaluators bind that digest together with the launcher digest and server configuration before execution.
 

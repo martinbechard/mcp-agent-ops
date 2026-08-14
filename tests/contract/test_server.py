@@ -109,6 +109,7 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
             "claim_reset",
             "claim_maintain_journal",
             "claim_report",
+            "capture_repository_state",
             "verify_yaml",
             "verify_markdown_links",
             "render_hierarchy_html",
@@ -126,6 +127,22 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
             "skill_validate",
             "detect_technology_skills",
         } <= names
+        checkpoint_tool = next(
+            tool for tool in tools if tool.name == "capture_repository_state"
+        )
+        markdown_tool = next(tool for tool in tools if tool.name == "verify_markdown_links")
+        assert checkpoint_tool.annotations is not None
+        assert checkpoint_tool.annotations.readOnlyHint is True
+        assert checkpoint_tool.annotations.destructiveHint is False
+        assert checkpoint_tool.annotations.openWorldHint is False
+        assert markdown_tool.annotations is not None
+        assert markdown_tool.annotations.readOnlyHint is True
+        assert markdown_tool.annotations.destructiveHint is False
+        assert markdown_tool.annotations.idempotentHint is True
+        assert markdown_tool.annotations.openWorldHint is False
+        assert {"patterns", "scope", "checkpoint_id"} <= set(
+            markdown_tool.inputSchema["properties"]
+        )
         claim_tools = {tool.name: tool for tool in tools if tool.name.startswith("claim_")}
         expected_claim_properties = {
             "claim_status": {"repository"},

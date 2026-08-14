@@ -151,3 +151,19 @@ def test_verify_markdown_links_reads_each_target_once_per_operation(
     assert result.ok is True
     assert reads[guide.resolve()] == 1
     assert reads[index.resolve()] == 1
+
+
+def test_verify_markdown_links_reports_exact_missing_paths_and_unmatched_globs(
+    tmp_path: Path,
+) -> None:
+    result = verify_markdown_links(
+        tmp_path,
+        ["docs/missing.md", "docs/new-section/*.md"],
+    )
+
+    assert result.ok is False
+    assert result.checked_files == []
+    assert result.unmatched_patterns == ["docs/new-section/*.md"]
+    assert [(finding.code, finding.path) for finding in result.findings] == [
+        ("requested_path_missing", "docs/missing.md")
+    ]

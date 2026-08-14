@@ -65,9 +65,31 @@ Example acquisition arguments:
 | Tool | Required arguments | Purpose |
 |---|---|---|
 | `verify_yaml` | `repository_root`, `paths` | Detect syntax errors, duplicate keys, missing files, decoding failures, and root escape. |
-| `verify_markdown_links` | `repository_root` | Check local targets and heading anchors; `patterns` defaults to every Markdown file. |
+| `capture_repository_state` | `repository_root` | Capture a process-local, read-only repository checkpoint and return its opaque ID. |
+| `verify_markdown_links` | `repository_root` | Check local targets and heading anchors using explicit patterns or a server-derived change scope. |
 
-Verification results contain `ok`, `checked_files`, and structured `findings`. They never mutate the inspected repository or use the network.
+`verify_markdown_links` supports these mutually exclusive scopes:
+
+- `patterns` is the backward-compatible default. Omitted patterns select `**/*.md`. A missing
+  exact path produces `requested_path_missing`; a glob that matches nothing appears in
+  `unmatched_patterns`.
+- `git_changed` derives staged, unstaged, renamed, deleted, and untracked files by comparing the
+  current Git-visible filesystem with `HEAD`. It includes unrelated changes already present in the
+  checkout.
+- `changed_since_checkpoint` requires a `checkpoint_id` from the same MCP process, repository, and
+  worktree. It excludes state already present when `capture_repository_state` ran.
+
+Changed scopes select current added, modified, renamed, and untracked Markdown sources. Deleted and
+renamed paths are reported, and current Markdown files that link to their former paths are included
+in `affected_inbound_files` and checked. Exact-content path moves are classified as renames; a move
+whose content also changes is reported as one deletion and one addition because checkpoints do not
+retain file content for similarity matching.
+
+Verification results contain `ok`, `scope`, `selected_files`, change classifications,
+`checked_files`, `affected_inbound_files`, `unmatched_patterns`, and structured `findings`. A
+successful empty changed scope has empty selection and checked-file lists. Checkpoints live only in
+MCP process memory and expire on restart. The tools never mutate the inspected repository, Git
+index, permissions, or file content and never use the network.
 
 `repository_root` must be absolute and resolve beneath `MCP_AGENT_OPS_WORKSPACE_ROOTS`.
 

@@ -7,6 +7,12 @@
 from pydantic import BaseModel, Field
 
 
+class RepositoryCheckpointResult(BaseModel):
+    """Return the opaque identity of one process-local repository checkpoint."""
+
+    checkpoint_id: str
+
+
 class VerificationFinding(BaseModel):
     """Describe one actionable verification failure.
 
@@ -30,5 +36,14 @@ class VerificationReport(BaseModel):
     """
 
     ok: bool
+    scope: str = "patterns"
+    checkpoint_id: str | None = None
+    selected_files: list[str] = Field(default_factory=list)
+    added_files: list[str] = Field(default_factory=list)
+    modified_files: list[str] = Field(default_factory=list)
+    renamed_files: list[dict[str, str]] = Field(default_factory=list)
+    deleted_files: list[str] = Field(default_factory=list)
     checked_files: list[str] = Field(default_factory=list)
+    affected_inbound_files: list[str] = Field(default_factory=list)
+    unmatched_patterns: list[str] = Field(default_factory=list)
     findings: list[VerificationFinding] = Field(default_factory=list)

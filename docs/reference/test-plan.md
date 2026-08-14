@@ -3,7 +3,8 @@
 ## Unit tests
 
 - YAML duplicate-key, syntax, selection, and path-boundary behavior.
-- Markdown local-link resolution, anchors, missing targets, ignored remote schemes, and malformed links.
+- Markdown local-link resolution, anchors, missing targets, ignored remote schemes, malformed links,
+  exact missing-path findings, and unmatched-glob reporting.
 - Project-first reference aggregation, ordered user folders, recursive relative-path discovery, duplicate resolved-file suppression, UTF-8 decoding, immutable content and digest pairing, batch rejection, size limits, traversal rejection, and symlink escape.
 - Working-directory project overlays, recursive nested project discovery, skill-root precedence,
   independent extension precedence, optional extension composition, aggregate digests, extension
@@ -47,6 +48,8 @@
   validation by name or absolute path, batch loading, explicit refresh, hierarchy rendering, and
   durable hierarchy-plan creation and structured mutation results.
 - In-memory calls for each capability group and immutable catalog reuse across repeated calls.
+- Read-only annotations and mutually exclusive input schemas for checkpoint capture and explicit,
+  Git-changed, or checkpoint-changed Markdown verification.
 - CLI and MCP parity for the canonical registry path and structured migration stops.
 - Rejection of repository, worktree, verification, validation, detection, hierarchy, and persisted
   hierarchy-theme paths outside configured roots.
@@ -68,6 +71,10 @@
   broad-domain, and hierarchy tools, invokes all three hierarchy operations, preserves reference
   and skill snapshots until explicit refresh, returns the next executable plan task, and shuts down
   cleanly.
+- A real stdio subprocess captures repository checkpoints and verifies checkpoint-scoped and
+  Git-changed Markdown files across staged, unstaged, untracked, renamed, deleted, space-containing,
+  and Unicode paths. Before and after every endpoint call, HEAD, index entries, staged and unstaged
+  diffs, untracked paths, file hashes, and file permissions remain byte-for-byte unchanged.
 - Windows CI runs the complete claim compatibility suite plus a real stdio subprocess; evaluator-only shared audit remains on its documented POSIX boundary.
 
 ## Release gates

@@ -50,8 +50,12 @@ from mcp_agent_ops.technology_detection.engine import load_yaml as load_detectio
 from mcp_agent_ops.technology_detection.service import TechnologyDetectionResult
 from mcp_agent_ops.technology_detection.service import detect_technology_skills as detect_domain
 from mcp_agent_ops.verification.markdown_links import verify_markdown_links as verify_markdown_links_domain
-from mcp_agent_ops.verification.models import VerificationReport
+from mcp_agent_ops.verification.models import RepositoryCheckpointResult, VerificationReport
 from mcp_agent_ops.verification.paths import resolve_within_roots
+from mcp_agent_ops.verification.repository_state import (
+    RepositoryCheckpointStore,
+    git_changed_files,
+)
 from mcp_agent_ops.verification.yaml_files import verify_yaml as verify_yaml_domain
 
 AUDITED_TOOL_NAMES = frozenset({
@@ -64,6 +68,7 @@ AUDITED_TOOL_NAMES = frozenset({
     "claim_report",
     "claim_reset",
     "claim_status",
+    "capture_repository_state",
     "create_hierarchy_plan",
     "detect_technology_skills",
     "reference_load",
@@ -415,6 +420,7 @@ def create_server(
         else configured_audit_session_id()
     )
     mcp = FastMCP("MCP Agent Operations")
+    repository_checkpoints = RepositoryCheckpointStore()
     tool_audit_log: ToolAuditLog | None = None
     if shared_audit and configured_log is None:
         raise ValueError("Shared MCP audit logging requires an audit log path.")
@@ -952,14 +958,78 @@ def create_server(
         """Validate exact YAML files, including duplicate keys, with structured diagnostics."""
         return verify_yaml_domain(workspace_path(repository_root), paths)
 
-    @mcp.tool
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        }
+    )
+    def capture_repository_state(repository_root: str) -> RepositoryCheckpointResult:
+        """Capture an opaque process-local checkpoint without changing the repository.
+
+        Args:
+            repository_root: Absolute Git worktree beneath a configured workspace root.
+
+        Returns:
+            A checkpoint identifier accepted by checkpoint-scoped Markdown verification.
+
+        Raises:
+            ValueError: If the path is not an accessible Git repository.
+
+        The checkpoint expires when this MCP server process exits and cannot be used for
+        another repository or worktree. The tool reads Git and files but performs no writes.
+        """
+        checkpoint = repository_checkpoints.capture(workspace_path(repository_root))
+        return RepositoryCheckpointResult(checkpoint_id=checkpoint.checkpoint_id)
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        }
+    )
     def verify_markdown_links(
         repository_root: str,
         patterns: list[str] | None = None,
+        scope: str = "patterns",
+        checkpoint_id: str | None = None,
     ) -> VerificationReport:
-        """Verify local Markdown targets and anchors selected by simple root-relative globs."""
+        """Verify local Markdown links using explicit or server-derived file selection.
+
+        Args:
+            repository_root: Absolute Git worktree or pattern root beneath a workspace root.
+            patterns: Exact paths or globs used only with ``scope=patterns``. Omission checks
+                every Markdown file in that scope for backward compatibility.
+            scope: ``patterns``, ``git_changed``, or ``changed_since_checkpoint``.
+            checkpoint_id: Required only for ``changed_since_checkpoint``.
+
+        Returns:
+            Structured selection, changed paths, inbound files, checked files, and findings.
+
+        Raises:
+            ValueError: If arguments are ambiguous, Git inspection fails, or the checkpoint
+                is missing, expired, unreconciled, or belongs to another repository.
+
+        This tool reads Git and file content but never writes the worktree or index.
+        """
+        root = workspace_path(repository_root)
+        changes = None
+        if scope == "git_changed":
+            changes = git_changed_files(root)
+        elif scope == "changed_since_checkpoint":
+            if checkpoint_id is None:
+                raise ValueError("changed_since_checkpoint scope requires checkpoint_id.")
+            changes = repository_checkpoints.changes_since(root, checkpoint_id)
         return verify_markdown_links_domain(
-            workspace_path(repository_root), patterns or ["**/*.md"]
+            root,
+            patterns,
+            scope=scope,
+            checkpoint_id=checkpoint_id,
+            changes=changes,
         )
 
     @mcp.tool
