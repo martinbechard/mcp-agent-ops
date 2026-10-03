@@ -66,7 +66,7 @@ class ReferenceCatalog:
     keeping content and digests paired until the caller builds a replacement snapshot.
 
     Example:
-        ``ReferenceCatalog.from_scopes([project / ".agents"], [user / ".agents"])``
+        ``ReferenceCatalog.from_scopes([project / ".agents/reference"], [user / ".agents/reference"])``
         publishes every safe UTF-8 file by its path relative to those roots.
     """
 

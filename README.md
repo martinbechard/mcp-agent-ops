@@ -202,7 +202,7 @@ mcp-agent-ops
 The server uses stdio by default. Configure these boundaries before exposing it to an agent:
 
 - `MCP_AGENT_OPS_SKILL_ROOTS` contains precedence-ordered readable skill roots, separated by the operating system path separator. A root may contain child skill directories or may be one exact skill directory containing `SKILL.md`.
-- `MCP_AGENT_OPS_REFERENCE_ROOTS` contains ordered readable user folders, separated by the operating system path separator. Every UTF-8 file beneath a configured folder is available by relative path.
+- `MCP_AGENT_OPS_REFERENCE_ROOTS` contains ordered readable user folders (conventionally `~/.agents/reference` then `~/.codex/reference`), separated by the operating system path separator. Every UTF-8 file beneath a configured folder is available by relative path.
 - `MCP_AGENT_OPS_DETECTION_REGISTRY` identifies the trusted methodology-owned technology registry.
 - `MCP_AGENT_OPS_WORKSPACE_ROOTS` contains allowed project and worktree roots, separated by the operating system path separator.
 - `MCP_AGENT_OPS_HIERARCHY_OUTPUT_FOLDER` optionally selects the default authorized destination
@@ -227,7 +227,7 @@ and the containing root that must be corrected or removed.
 order for `python.extension` and appends that complete skill when found. The base and extension
 resolve independently, so either one can come from a project or configured user root.
 
-When the working directory is beneath an allowed workspace, the server recursively publishes files beneath `<cwd>/.agents` and `<cwd>/.codex/skills` before files beneath the configured user reference folders. The server aggregates every matching relative path in search order with one newline between sources. Traversal and symlinks that resolve outside their selected folder are not published. `reference_refresh` rescans all reference folders.
+When the working directory is beneath an allowed workspace, the server recursively publishes files beneath `<cwd>/.agents/reference` and `<cwd>/.codex/reference` before files beneath the configured user reference folders. The server aggregates every matching relative path in search order with one newline between sources. Traversal and symlinks that resolve outside their selected folder are not published. `reference_refresh` rescans all reference folders. Project `.agents/reference` precedes `.codex/reference`; all project sources precede configured user sources. No filename allowlist is used, and neither the project root nor user home is implicitly published. Configure user folders explicitly, as with skill roots.
 
 Repository, project, verification, worktree, and validation paths supplied through tools must be absolute and resolve beneath their configured boundary. Name-based skill validation uses the same catalog lookup as skill loading. Explicit skill-validation paths may also target unpublished skills anywhere beneath the authorized working project, without adding those paths to catalog discovery. Catalog discovery, skill validation, and technology detection recheck every nested manifest, metadata file, source file, and supporting resource before reading it. The server rejects missing boundary configuration, traversal, and symlink escape rather than granting ambient filesystem access.
 

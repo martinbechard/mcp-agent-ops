@@ -29,7 +29,7 @@ async def test_real_stdio_server_initializes_lists_and_invokes_tools(tmp_path: P
     environment["MCP_AGENT_OPS_SKILL_ROOTS"] = str(tmp_path / "skills")
     reference_root = tmp_path / "references"
     reference_root.mkdir()
-    project_reference = tmp_path / ".agents" / "references" / "lexicon.txt"
+    project_reference = tmp_path / ".agents" / "reference" / "references" / "lexicon.txt"
     project_reference.parent.mkdir(parents=True)
     project_reference.write_text("project vocabulary", encoding="utf-8")
     (reference_root / "references").mkdir()

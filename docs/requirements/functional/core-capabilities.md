@@ -37,7 +37,7 @@
 ## Reference Data
 
 - The service recursively loads UTF-8 reference files beneath authorized folders by relative path.
-- Matches beneath an authorized working project's `.agents` and `.codex/skills` folders precede matches from configured user folders.
+- Matches beneath an authorized working project's `.agents/reference` and `.codex/reference` folders precede matches from configured user folders.
 - Every matching scope contributes to one newline-separated aggregation; later matches do not shadow earlier matches.
 - Reference discovery rejects traversal and does not publish symlinks that resolve outside their selected folder.
 - A caller can load several aggregated references in one ordered, bounded, all-or-nothing operation.

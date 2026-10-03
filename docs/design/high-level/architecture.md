@@ -83,7 +83,7 @@ The technology registry is parsed once per server process. A detection call comp
 
 ## Reference-loading boundary
 
-The adapter authorizes the working project through the configured workspace roots. It then passes the project's `.agents` and `.codex/skills` folders plus the configured user reference folders to `reference_data`. The domain package does not depend on FastMCP or environment parsing.
+The adapter authorizes the working project through the configured workspace roots. It then passes the project's `.agents/reference` and `.codex/reference` folders plus the configured user reference folders to `reference_data`. The domain package does not depend on FastMCP or environment parsing.
 
 The domain recursively discovers UTF-8 files beneath every allowed folder and publishes them by relative path. Files at the same relative path are aggregated in project-first folder order. The domain omits paths that escape through symlinks, deduplicates identical resolved files, and joins all remaining contents with one newline. The model-facing result identifies each source by a path-free scope label and SHA-256 digest.
 

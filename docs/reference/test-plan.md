@@ -5,7 +5,7 @@
 - YAML duplicate-key, syntax, selection, and path-boundary behavior.
 - Markdown local-link resolution, anchors, missing targets, ignored remote schemes, malformed links,
   exact missing-path findings, and unmatched-glob reporting.
-- Project-first reference aggregation, ordered user folders, recursive relative-path discovery, duplicate resolved-file suppression, UTF-8 decoding, immutable content and digest pairing, batch rejection, size limits, traversal rejection, and symlink escape.
+- Conventional project and configured user .agents/reference then .codex/reference ordering, exclusion of arbitrary project files, conventional-root symlink containment, project-first reference aggregation, ordered user folders, recursive relative-path discovery, duplicate resolved-file suppression, UTF-8 decoding, immutable content and digest pairing, batch rejection, size limits, traversal rejection, and symlink escape.
 - Working-directory project overlays, recursive nested project discovery, skill-root precedence,
   independent extension precedence, optional extension composition, aggregate digests, extension
   naming validation, extension-aware size limits, name-to-path lookup, same-root ambiguity

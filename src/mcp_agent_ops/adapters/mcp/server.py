@@ -273,14 +273,14 @@ def _project_reference_roots(
     project_root: Path,
     workspace_roots: Sequence[Path],
 ) -> list[Path]:
-    """Return project agent and skill folders when the project is in scope.
+    """Return conventional project reference folders when the project is in scope.
 
     Args:
         project_root: Working project whose local agent references may be published.
         workspace_roots: Configured roots authorized to contain working projects.
 
     Returns:
-        The project ``.agents`` and ``.codex/skills`` folders, or an empty list when the
+        The project ``.agents/reference`` and ``.codex/reference`` folders, or an empty list when the
         project is outside every authorized workspace.
 
     Raises:
@@ -290,7 +290,7 @@ def _project_reference_roots(
     resolved_workspaces = [root.expanduser().resolve() for root in workspace_roots]
     if not any(_within_root(resolved_project, root) for root in resolved_workspaces):
         return []
-    roots = [resolved_project / ".agents", resolved_project / ".codex" / "skills"]
+    roots = [resolved_project / ".agents" / "reference", resolved_project / ".codex" / "reference"]
     resolved_roots = [root.resolve() for root in roots]
     if not all(_within_root(root, resolved_project) for root in resolved_roots):
         raise ValueError("Project reference root resolves outside the project root.")
@@ -358,7 +358,7 @@ def create_server(
         audit_session_id: Optional evaluator-generated identity copied into every audit record.
         project_root: Working-directory project context used for automatic skill discovery
             beneath `.agents/skills` and `.codex/skills` and reference discovery beneath
-            `.agents` and `.codex/skills`. Defaults to the process working directory and is
+            `.agents/reference` and `.codex/reference`. Defaults to the process working directory and is
             ignored unless it is inside a configured workspace.
         reference_roots: Optional ordered user reference folders used instead of environment
             configuration. Every contained UTF-8 file is available by relative path.

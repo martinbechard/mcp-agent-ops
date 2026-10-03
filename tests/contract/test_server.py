@@ -5,6 +5,7 @@
 # Test plan: docs/reference/test-plan.md
 
 import asyncio
+import hashlib
 import json
 import os
 import subprocess
@@ -973,13 +974,13 @@ async def test_server_aggregates_reference_scopes_until_explicit_refresh(tmp_pat
     shared = tmp_path / "shared"
     project.mkdir()
     shared.mkdir()
-    project_reference = project / ".agents" / "references" / "lexicon.txt"
+    project_reference = project / ".agents" / "reference" / "references" / "lexicon.txt"
     shared_reference = shared / "references" / "lexicon.txt"
     project_reference.parent.mkdir(parents=True)
     shared_reference.parent.mkdir(parents=True)
     project_reference.write_text("project", encoding="utf-8")
     shared_reference.write_text("shared", encoding="utf-8")
-    project_skill_reference = project / ".codex" / "skills" / "example" / "notes.md"
+    project_skill_reference = project / ".codex" / "reference" / "example" / "notes.md"
     project_skill_reference.parent.mkdir(parents=True)
     project_skill_reference.write_text("project skill notes", encoding="utf-8")
     original_builder = ReferenceCatalog.from_scopes
@@ -1048,8 +1049,8 @@ async def test_server_ignores_project_references_outside_authorized_workspaces(
     shared = tmp_path / "shared"
     for root in (workspace, project, shared):
         root.mkdir()
-    (project / ".agents").mkdir()
-    (project / ".agents" / "lexicon.txt").write_text("outside", encoding="utf-8")
+    (project / ".agents" / "reference").mkdir(parents=True)
+    (project / ".agents" / "reference" / "lexicon.txt").write_text("outside", encoding="utf-8")
     (shared / "lexicon.txt").write_text("shared", encoding="utf-8")
     server = create_server(
         skill_roots=[],
@@ -1998,3 +1999,48 @@ async def test_audit_middleware_fails_closed_before_dispatch() -> None:
     with pytest.raises(OSError, match="audit unavailable"):
         await middleware.on_call_tool(context, dispatch)
     assert dispatched is False
+
+
+async def test_conventional_reference_roots_order_and_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Publish only reference folders in project-first and agents-before-codex order."""
+    project = tmp_path / "workspace" / "project"
+    user = tmp_path / "home"
+    roots = [base / host / "reference" for base in (project, user) for host in (".agents", ".codex")]
+    for index, root in enumerate(roots):
+        (root / "nested").mkdir(parents=True)
+        (root / "terminology.md").write_text(str(index), encoding="utf-8")
+        (root / "nested" / "arbitrary.txt").write_text(str(index), encoding="utf-8")
+    (project / "private.md").write_text("private", encoding="utf-8")
+    (project / ".agents" / "private.md").write_text("private", encoding="utf-8")
+    monkeypatch.setenv("MCP_AGENT_OPS_REFERENCE_ROOTS", os.pathsep.join(map(str, roots[2:])))
+    monkeypatch.setenv("MCP_AGENT_OPS_REFERENCE_NAMES", "ignored-legacy-allowlist.md")
+    server = create_server(skill_roots=[], workspace_roots=[project.parent], project_root=project)
+    async with Client(server) as client:
+        refreshed = (await client.call_tool("reference_refresh", {})).structured_content
+        loaded = (await client.call_tool("reference_load", {"names": ["terminology.md"]})).structured_content
+        assert refreshed["names"] == ["nested/arbitrary.txt", "terminology.md"]
+        assert loaded["catalog_revision"] == refreshed["revision"]
+        reference = loaded["references"][0]
+        assert reference["content"] == "0\n1\n2\n3"
+        assert [source["scope"] for source in reference["sources"]] == [
+            "project:0", "project:1", "configured:0", "configured:1",
+        ]
+        assert reference["sources"][0]["digest"] == hashlib.sha256(b"0").hexdigest()
+        assert str(tmp_path) not in json.dumps(loaded)
+        absent = (await client.call_tool("reference_load", {"names": ["absent.md"]})).structured_content
+        assert absent["references"] == []
+        assert [error["code"] for error in absent["errors"]] == ["reference_not_found"]
+
+
+@pytest.mark.parametrize("host", [".agents", ".codex"])
+def test_project_reference_root_cannot_escape_project(tmp_path: Path, host: str) -> None:
+    """Reject an authorized project whose conventional reference root escapes it."""
+    project = tmp_path / "project"
+    outside = tmp_path / "outside"
+    (project / host).mkdir(parents=True)
+    outside.mkdir()
+    (project / host / "reference").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match="Project reference root resolves outside"):
+        create_server(skill_roots=[], reference_roots=[], workspace_roots=[tmp_path], project_root=project)
