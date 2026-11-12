@@ -1032,7 +1032,14 @@ def create_server(
             changes=changes,
         )
 
-    @mcp.tool
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        }
+    )
     def reference_load(names: list[str]) -> ReferenceLoadResult:
         """Load recursive text references aggregated across every matching allowed folder.
 
@@ -1091,7 +1098,14 @@ def create_server(
         """Read one supporting skill resource without permitting directory traversal."""
         return catalog().read_resource(name, resource_path)
 
-    @mcp.tool
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        }
+    )
     def skill_load(
         names: list[str],
         include_extensions: bool = False,

@@ -128,6 +128,13 @@ async def test_server_publishes_small_named_tools_and_structured_results(tmp_pat
             "skill_validate",
             "detect_technology_skills",
         } <= names
+        for name in ("reference_load", "skill_load"):
+            annotations = next(tool.annotations for tool in tools if tool.name == name)
+            assert annotations is not None
+            assert annotations.readOnlyHint is True
+            assert annotations.destructiveHint is False
+            assert annotations.idempotentHint is True
+            assert annotations.openWorldHint is False
         checkpoint_tool = next(
             tool for tool in tools if tool.name == "capture_repository_state"
         )
